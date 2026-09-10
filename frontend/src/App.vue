@@ -1,0 +1,142 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import TabBar from '@/components/TabBar.vue'
+import TerminalPane from '@/components/TerminalPane.vue'
+import Toast from '@/components/Toast.vue'
+import QuickCmdsListDialog from '@/components/QuickCmdsListDialog.vue'
+import QuickCmdEditDialog from '@/components/QuickCmdEditDialog.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import SettingsDialog from '@/components/SettingsDialog.vue'
+import { useTheme } from '@/composables/useTheme'
+import { t } from '@/i18n'
+import { useSessionsStore } from '@/stores/sessions'
+import { useQuickCmdsStore } from '@/stores/quickCmds'
+import { useToastStore } from '@/stores/toast'
+import { usePaneControlsStore } from '@/stores/paneControls'
+import { useSettingsStore } from '@/stores/settings'
+import type { QuickCmd } from '@/serverapi'
+
+useTheme() // 初始化 / 跟随系统主题
+const store = useSessionsStore()
+const qc = useQuickCmdsStore()
+const toast = useToastStore()
+const pc = usePaneControlsStore()
+const settings = useSettingsStore()
+
+// 激活标签对应的终端控制（复制/粘贴/清屏/重连/发送/连接状态）
+const activeControls = computed(() => pc.get(store.activeUid))
+
+const settingsVisible = ref(false)
+
+onMounted(async () => {
+  document.title = t('app_name')
+  // 先加载运行信息与持久化的启动用户模式，再恢复会话——
+  // 无会话可恢复时新建的标签按默认用户建立会话（custom 模式固定为登录用户）。
+  await Promise.all([store.loadInfo(), settings.loadUserMode()])
+  const n = await store.restore(settings.userMode === 'root' ? 'root' : 'nas')
+  if (n > 0) {
+    toast.show(t('restore_done', { n }), 'success')
+  }
+})
+
+// ---------- 快捷指令弹窗状态 ----------
+const qcVisible = ref(false)
+const editVisible = ref(false)
+const editingCmd = ref<QuickCmd | null>(null)
+const deleteTarget = ref<QuickCmd | null>(null)
+
+// 点击命令卡片：把内容发送到当前激活标签的终端，并把光标聚焦回终端
+function runQuickCmd(cmd: QuickCmd) {
+  const ctl = activeControls.value
+  if (!ctl?.connected) {
+    toast.show(t('qc_not_connected'), 'error')
+    return
+  }
+  const payload = cmd.content.replace(/\r?\n/g, '\r') + (cmd.auto ? '\r' : '')
+  ctl.send?.(payload)
+  ctl.focus?.()
+  qcVisible.value = false
+}
+
+function onAddCmd() {
+  editingCmd.value = null
+  editVisible.value = true
+}
+function onEditCmd(cmd: QuickCmd) {
+  editingCmd.value = cmd
+  editVisible.value = true
+}
+function onDeleteCmd(cmd: QuickCmd) {
+  deleteTarget.value = cmd
+}
+
+async function saveQuickCmd(payload: { name: string; content: string; auto: boolean }) {
+  try {
+    if (editingCmd.value) await qc.update(editingCmd.value, payload)
+    else await qc.add(payload)
+    toast.show(t('qc_saved'), 'success')
+  } catch {
+    toast.show(t('qc_save_failed'), 'error')
+  }
+  editingCmd.value = null
+}
+
+async function confirmDeleteQuickCmd() {
+  const target = deleteTarget.value
+  if (!target) return
+  try {
+    await qc.remove(target.id)
+    toast.show(t('qc_deleted'), 'success')
+  } catch {
+    toast.show(t('qc_save_failed'), 'error')
+  }
+  deleteTarget.value = null
+}
+</script>
+
+<template>
+  <div class="h-dvh flex flex-col bg-bg dark:bg-bg-dark text-ink dark:text-ink-dark overflow-hidden">
+    <TabBar @quick-cmds="qcVisible = true" @settings="settingsVisible = true" />
+
+    <!-- 终端面板区：每个标签一个面板，非激活用 visibility 隐藏（保持尺寸与 WS 存活） -->
+    <main class="flex-1 min-h-0 relative">
+      <TerminalPane
+        v-for="tab in store.tabs"
+        :key="tab.uid"
+        :tab="tab"
+        :active="store.activeUid === tab.uid"
+        class="absolute inset-0"
+        :class="store.activeUid === tab.uid ? '' : 'invisible'"
+      />
+
+      <!-- 启动恢复中提示 -->
+      <div
+        v-if="store.restoring"
+        class="absolute inset-0 z-20 flex items-center justify-center bg-bg/70 dark:bg-bg-dark/70 backdrop-blur-sm text-sm text-ink-soft dark:text-ink-soft-dark"
+      >
+        {{ t('restoring') }}
+      </div>
+    </main>
+
+    <Toast />
+
+    <QuickCmdsListDialog
+      v-model:visible="qcVisible"
+      @run="runQuickCmd"
+      @add="onAddCmd"
+      @edit="onEditCmd"
+      @delete="onDeleteCmd"
+    />
+    <QuickCmdEditDialog v-model:visible="editVisible" :cmd="editingCmd" @save="saveQuickCmd" />
+    <SettingsDialog v-model:visible="settingsVisible" />
+    <ConfirmDialog
+      :visible="deleteTarget !== null"
+      :title="t('qc_delete_confirm_title')"
+      :message="t('qc_delete_confirm_msg', { name: deleteTarget?.name || '' })"
+      :confirm-text="t('qc_delete')"
+      :cancel-text="t('confirm_cancel')"
+      @confirm="confirmDeleteQuickCmd"
+      @update:visible="(v) => { if (!v) deleteTarget = null }"
+    />
+  </div>
+</template>

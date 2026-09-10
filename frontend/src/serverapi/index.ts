@@ -1,0 +1,114 @@
+// API client. The frontend is served over the unix admin socket under a baseurl
+// prefix fronted by a proxy. The backend injects a <base href> tag into
+// index.html at runtime with the real baseurl (TERMINAL_ADMIN_BASEURL), so we
+// resolve API/WS paths against document.baseURI — the prefix is NOT known at
+// build time.
+export function runtimeBase(): string {
+  if (typeof document !== 'undefined' && document.baseURI) {
+    const p = new URL(document.baseURI).pathname
+    return p.endsWith('/') ? p.slice(0, -1) : p
+  }
+  return import.meta.env.BASE_URL.replace(/\/$/, '') || ''
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(runtimeBase() + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...init
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok || !data || data.ok === false) {
+    throw new Error((data && (data.error || data.msg)) || `HTTP ${res.status}`)
+  }
+  return data as T
+}
+
+// wsUrl builds the WebSocket URL for the terminal endpoint, under the runtime
+// base path. id 为空且未指定用户时后端新建会话（以持久化的启动用户模式为准）。
+// user 参数："root" → 以 root 运行；省略 → 默认 NAS 用户（后端读 X-Trim-Userid）。
+export function wsUrl(id?: string, user?: string): string {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  let query = ''
+  if (id) query = `?id=${encodeURIComponent(id)}`
+  else if (user) query = `?user=${encodeURIComponent(user)}`
+  const u = new URL(runtimeBase() + '/terminal' + query, location.href)
+  u.protocol = proto
+  return u.toString()
+}
+
+// 与后端约定的 OSC 控制消息（不写入 PTY）
+export function resizePayload(cols: number, rows: number): string {
+  return `\x1b]resize;${cols};${rows}\x07`
+}
+export const HEARTBEAT_PAYLOAD = '\x1b]ping\x07'
+
+export interface QuickCmd {
+  id: string
+  name: string
+  content: string
+  auto: boolean
+}
+
+export interface SessionInfo {
+  id: string
+  createdAt: string
+  lastActive: string
+  size: number
+  exited: boolean
+}
+
+export interface RuntimeInfo {
+  adminSock: string
+  adminBaseURL: string
+  sessionDir: string
+  quickCmdsFile: string
+  userModeFile: string
+  shell: string
+  home: string
+  version: string
+  lang: string
+  trimUid?: string // 网关 X-Trim-Userid 原始值
+  nasUser?: NasUserInfo
+  currentUid?: number
+}
+
+export interface NasUserInfo {
+  uid: number
+  gid: number
+  username: string
+  home: string
+}
+
+export type UserMode = 'nas' | 'root' | 'custom'
+
+// 单个标签会话的运行用户
+export type UserSpec = 'nas' | 'root'
+
+export const api = {
+  info: () => request<{ ok: boolean; runtime: RuntimeInfo }>('/api/info'),
+  sessions: () => request<{ ok: boolean; sessions: SessionInfo[] }>('/api/sessions'),
+  sessionHistory: (id: string) =>
+    request<{ ok: boolean; id: string; size: number; content: string }>(
+      '/api/session/history?id=' + encodeURIComponent(id)
+    ),
+  closeSession: (id: string) =>
+    request<{ ok: boolean; id: string }>('/api/session?id=' + encodeURIComponent(id), { method: 'DELETE' }),
+  clearSessionHistory: (id: string) =>
+    request<{ ok: boolean; id: string }>('/api/session/clear?id=' + encodeURIComponent(id), { method: 'POST' }),
+  listQuickCmds: () => request<{ ok: boolean; path: string; commands: QuickCmd[] }>('/api/quickcmds'),
+  saveQuickCmds: (commands: QuickCmd[]) =>
+    request<{ ok: boolean; path: string; commands: QuickCmd[] }>('/api/quickcmds', {
+      method: 'POST',
+      body: JSON.stringify({ commands })
+    }),
+  // 启动用户模式（nas | root）持久化
+  userMode: () =>
+    request<{ ok: boolean; mode: UserMode; path: string; defaultMode: string; nasUser?: NasUserInfo }>(
+      '/api/user-mode'
+    ),
+  saveUserMode: (mode: UserMode) =>
+    request<{ ok: boolean; mode: UserMode; path: string }>('/api/user-mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode })
+    })
+}

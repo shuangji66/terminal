@@ -1,0 +1,190 @@
+@import 'tailwindcss';
+
+/* 深浅主题：class 模式（与 dsh 一致，html.dark 类切换） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ===== Genesis 设计令牌（tailwind v4 CSS-first 配置） ===== */
+@theme {
+  /* 品牌主色（indigo） */
+  --color-brand: #6366f1;
+  --color-brand-hover: #4f46e5;
+  --color-brand-soft: rgba(99, 102, 241, 0.12);
+
+  /* 语义色 */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  /* 中性层：背景 / 表面 / 边框 / 文本（浅色 + 深色） */
+  --color-bg: #fafafa;
+  --color-bg-dark: #0b0b0f;
+  --color-surface: #ffffff;
+  --color-surface-dark: #111115;
+  --color-line: #e8e8ec;
+  --color-line-dark: #2a2a32;
+  --color-ink: #0a0a0a;
+  --color-ink-dark: #ededf0;
+  --color-ink-soft: #6b6b6b;
+  --color-ink-soft-dark: #a6a6ad;
+  --color-ink-faint: #9c9c9c;
+  --color-ink-faint-dark: #8a8a92;
+
+  /* 字体 */
+  --font-sans: 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'General Sans', 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 投影：卡片悬浮 / 主按钮辉光 / 弹层 */
+  --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.08);
+  --shadow-glow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  --shadow-pop: 0 10px 40px rgba(0, 0, 0, 0.12);
+}
+
+/* ===== 基础排版 ===== */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #fafafa;
+  color: #0a0a0a;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.dark body {
+  background-color: #0b0b0f;
+  color: #ededf0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.font-mono,
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+}
+
+/* 焦点环：3px 品牌色淡环 */
+*:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  border-radius: 6px;
+}
+
+html,
+body {
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+}
+
+/* 隐藏滚动条（标签条横向滚动） */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* 终端容器：保持零干扰，xterm 自行管理尺寸 */
+.term-container {
+  height: 100%;
+  width: 100%;
+}
+
+/* 终端复制/粘贴反馈气泡 */
+.term-copy-toast {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 30;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.78);
+  color: #ffffff;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+/* ===== 可复用组件类 ===== */
+@layer components {
+  /* 主按钮：indigo 填充白字、6px 圆角、hover 辉光 + 上移 */
+  .g-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-brand hover:bg-brand-hover text-white font-medium rounded-md px-4 h-10 text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150;
+  }
+  .g-btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  }
+
+  /* 次要按钮：透明 + 1px 边框 */
+  .g-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 bg-transparent border border-line dark:border-line-dark text-ink dark:text-ink-dark font-medium rounded-md px-4 h-10 text-sm hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150;
+  }
+  .g-btn-secondary:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  /* 幽灵按钮：无边框无底色 */
+  .g-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 text-ink-soft hover:text-ink hover:bg-black/5 dark:text-ink-soft-dark dark:hover:text-white dark:hover:bg-white/5 font-medium rounded-md px-2.5 h-8 text-sm transition-colors duration-150;
+  }
+
+  /* 危险文字按钮 */
+  .g-btn-danger {
+    @apply inline-flex items-center justify-center gap-2 bg-transparent border border-danger text-danger font-medium rounded-md px-4 h-10 text-sm hover:bg-danger/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150;
+  }
+  .g-btn-danger:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  /* 输入框 */
+  .g-input {
+    @apply w-full bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-md px-3.5 py-2.5 text-sm text-ink dark:text-ink-dark placeholder:text-ink-faint outline-none transition-all duration-150;
+  }
+  .g-input:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  }
+
+  /* 标签 chip：胶囊形状 */
+  .g-chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-black/5 dark:bg-white/10 text-ink-soft dark:text-ink-soft-dark px-3 py-1 text-xs font-medium whitespace-nowrap;
+  }
+  .g-chip-active {
+    @apply bg-brand text-white;
+  }
+}
+
+/* 弹窗遮罩进场动画 */
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 200ms ease;
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}

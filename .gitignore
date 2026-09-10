@@ -1,0 +1,11 @@
+# build artifacts
+node_modules
+dist
+embed
+terminal
+*.log
+
+# go caches (project-local, same as dsh)
+.gocache
+.gopath
+.gomod
