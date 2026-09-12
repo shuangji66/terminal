@@ -99,7 +99,7 @@ export const zh: Record<string, string> = {
   about_title: '关于',
   about_desc: '基于 Go 与 Vue 3 构建的本地 Web 终端，仅经 Unix Socket 访问。',
   about_tech_label: '主要技术栈：',
-  about_tech: 'Go 1.26 · Vue 3 · TypeScript · Tailwind CSS 4 · Pinia · xterm.js v6',
+  about_tech: 'Go 1.27 · Vue 3 · TypeScript · Tailwind CSS 4 · Pinia · xterm.js v6',
   about_github: 'GitHub',
 }
 

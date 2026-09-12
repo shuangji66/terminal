@@ -55,7 +55,7 @@
 
 | 层 | 技术 |
 | --- | --- |
-| 后端 | Go ≥ 1.26（标准库 + `github.com/creack/pty`，按 uid 切换用户） |
+| 后端 | Go ≥ 1.27（标准库 + `github.com/creack/pty`，按 uid 切换用户） |
 | 前端 | Vue 3.5（Composition API / `<script setup>`）+ TypeScript 7 + Vite 8 |
 | 前端构建 | Tailwind CSS v4（`@tailwindcss/vite`）、Pinia 4、xterm.js v6（fit/webgl/search/web-links/clipboard/unicode11/serialize/image） |
 | 类型检查 | `npm run type-check`（`tsc --noEmit`，TS 7 原生编译器；`.vue` 模板以构建期检查为准，vue-tsc 与 TS 7 暂不兼容） |
@@ -97,7 +97,7 @@
 
 ## 构建
 
-> 前置：Go ≥ 1.26、Node.js ≥ 24。
+> 前置：Go ≥ 1.27、Node.js ≥ 24。
 
 构建会把前端 `dist` 拷入 `backend/embed`，再用 `//go:embed` 打成一个**单文件自包含**
 Go 二进制 `backend/terminal`。

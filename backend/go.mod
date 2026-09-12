@@ -1,5 +1,5 @@
 module terminal/backend
 
-go 1.26
+go 1.27
 
-require github.com/creack/pty v1.1.23
+require github.com/creack/pty v1.1.24

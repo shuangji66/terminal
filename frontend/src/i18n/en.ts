@@ -99,6 +99,6 @@ export const en: Record<string, string> = {
   about_title: 'About',
   about_desc: 'A local web terminal built with Go and Vue 3, served over a Unix socket only.',
   about_tech_label: 'Tech stack: ',
-  about_tech: 'Go 1.26 · Vue 3 · TypeScript · Tailwind CSS 4 · Pinia · xterm.js v6',
+  about_tech: 'Go 1.27 · Vue 3 · TypeScript · Tailwind CSS 4 · Pinia · xterm.js v6',
   about_github: 'GitHub',
 }
