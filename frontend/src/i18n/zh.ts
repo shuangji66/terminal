@@ -56,6 +56,8 @@ export const zh: Record<string, string> = {
   qc_empty: '暂无快捷指令，点击「新增」创建。',
   qc_edit: '编辑',
   qc_delete: '删除',
+  qc_move_up: '上移',
+  qc_move_down: '下移',
   qc_auto_tag: '自动执行',
   qc_add_title: '新增快捷指令',
   qc_edit_title: '编辑快捷指令',

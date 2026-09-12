@@ -77,6 +77,8 @@ export const en: Record<string, string> = {
   qc_delete_confirm_msg: 'Delete quick command "{name}"?',
   qc_not_connected: 'Terminal not connected, cannot run',
   qc_loaded: 'Quick commands loaded',
+  qc_move_up: 'Move up',
+  qc_move_down: 'Move down',
 
   // Settings
   settings_title: 'Settings',

@@ -51,5 +51,12 @@ export const useQuickCmdsStore = defineStore('quickCmds', () => {
     return persist()
   }
 
-  return { commands, loading, load, persist, add, update, remove }
+  // 根据 id 列表重新排序命令
+  function reorder(orderedIds: string[]) {
+    const ordered = orderedIds.map((id) => commands.value.find((c) => c.id === id)).filter((c): c is QuickCmd => !!c)
+    commands.value = ordered
+    return persist()
+  }
+
+  return { commands, loading, load, persist, add, update, remove, reorder }
 })

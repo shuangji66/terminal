@@ -43,7 +43,11 @@ onMounted(async () => {
 const qcVisible = ref(false)
 const editVisible = ref(false)
 const editingCmd = ref<QuickCmd | null>(null)
+// 删除用独立显隐开关 + 待删目标：弹窗的 update:visible 只同步显隐，
+// 不提前清空 deleteTarget，否则 confirm 触发时目标已被置空导致删除失效
+// （与 TabBar 关闭标签的 closeTargetUid 同一坑）。
 const deleteTarget = ref<QuickCmd | null>(null)
+const deleteDialogVisible = ref(false)
 
 // 点击命令卡片：把内容发送到当前激活标签的终端，并把光标聚焦回终端
 function runQuickCmd(cmd: QuickCmd) {
@@ -68,6 +72,7 @@ function onEditCmd(cmd: QuickCmd) {
 }
 function onDeleteCmd(cmd: QuickCmd) {
   deleteTarget.value = cmd
+  deleteDialogVisible.value = true
 }
 
 async function saveQuickCmd(payload: { name: string; content: string; auto: boolean }) {
@@ -82,15 +87,32 @@ async function saveQuickCmd(payload: { name: string; content: string; auto: bool
 }
 
 async function confirmDeleteQuickCmd() {
+  deleteDialogVisible.value = false
   const target = deleteTarget.value
+  deleteTarget.value = null
   if (!target) return
   try {
     await qc.remove(target.id)
+    // 删除后 store.commands 已更新，v-for 以 id 为 key 会随之重渲染，
+    // 每项的 idx（上下移动可用性）自动刷新，无需额外处理。
     toast.show(t('qc_deleted'), 'success')
   } catch {
     toast.show(t('qc_save_failed'), 'error')
   }
+}
+
+function cancelDeleteQuickCmd() {
+  deleteDialogVisible.value = false
   deleteTarget.value = null
+}
+
+// 拖拽排序后立即持久化到后端
+async function handleReorder(orderedIds: string[]) {
+  try {
+    await qc.reorder(orderedIds)
+  } catch {
+    toast.show(t('qc_save_failed'), 'error')
+  }
 }
 </script>
 
@@ -126,17 +148,19 @@ async function confirmDeleteQuickCmd() {
       @add="onAddCmd"
       @edit="onEditCmd"
       @delete="onDeleteCmd"
+      @reorder="handleReorder"
     />
     <QuickCmdEditDialog v-model:visible="editVisible" :cmd="editingCmd" @save="saveQuickCmd" />
     <SettingsDialog v-model:visible="settingsVisible" />
     <ConfirmDialog
-      :visible="deleteTarget !== null"
+      :visible="deleteDialogVisible"
       :title="t('qc_delete_confirm_title')"
       :message="t('qc_delete_confirm_msg', { name: deleteTarget?.name || '' })"
       :confirm-text="t('qc_delete')"
       :cancel-text="t('confirm_cancel')"
       @confirm="confirmDeleteQuickCmd"
-      @update:visible="(v) => { if (!v) deleteTarget = null }"
+      @cancel="cancelDeleteQuickCmd"
+      @update:visible="(v) => { if (!v) deleteDialogVisible = false }"
     />
   </div>
 </template>

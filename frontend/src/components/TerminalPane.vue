@@ -144,16 +144,16 @@ const searchLabel = computed(() => {
 })
 
 // ---------- xterm 主题配色（随应用主题切换） ----------
-// 深色模式：黑底绿字（经典绿色终端风；绿色略暗淡避免扎眼）
+// 深色模式：黑底 #1A1A1A 背景，#4EC9B0 绿字（经典绿色终端风）
 const DARK_PALETTE = {
-  background: '#000000',
-  foreground: '#2bd957',
-  cursor: '#2bd957',
-  cursorAccent: '#000000',
-  selectionBackground: 'rgba(51, 255, 102, 0.35)',
+  background: '#1A1A1A',
+  foreground: '#4EC9B0',
+  cursor: '#4EC9B0',
+  cursorAccent: '#1A1A1A',
+  selectionBackground: 'rgba(78, 201, 176, 0.35)',
   black: '#4d4d4d',
   red: '#ff5555',
-  green: '#33ff66',
+  green: '#4EC9B0',
   yellow: '#ffdd33',
   blue: '#5555ff',
   magenta: '#ff55ff',
@@ -803,9 +803,13 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex flex-col h-full bg-bg dark:bg-bg-dark">
     <!-- 终端容器（相对定位，承载复制提示气泡、搜索悬浮框、系统文字工具） -->
+    <!-- 深色模式下 terminal-area 背景为 #1A1A1A、文字为 #4EC9B0；浅色模式下背景为米黄色#faf5e9、文字为#1a1814
+         左侧与下方各加 10px 边框（颜色跟随终端区域颜色），无分隔线 -->
     <div
       ref="el"
-      class="term-container flex-1 min-h-0 relative"
+      class="term-container flex-1 min-h-0 relative dark:bg-[#1A1A1A] dark:text-[#4EC9B0]
+             border-l-[10px] border-b-[10px]
+             border-[#faf5e9] dark:border-[#1A1A1A]"
       @touchstart="onTouchStart"
       @touchmove="onTouchMove"
       @touchend="onTouchEnd"

@@ -17,6 +17,7 @@ const emit = defineEmits<{
 const store = useQuickCmdsStore()
 
 const open = ref(props.visible)
+const loadingReorder = ref(false)
 watch(
   () => props.visible,
   (v) => {
@@ -29,6 +30,34 @@ function close() {
   open.value = false
   emit('update:visible', false)
 }
+
+// 交换相邻两个命令的顺序并持久化
+// 注意：Pinia setup store 会把 ref 自动解包，store.commands 直接是数组（不能加 .value）
+async function moveUp(idx: number) {
+  if (idx <= 0) return
+  const cmds = [...store.commands]
+  const [moved] = cmds.splice(idx, 1)
+  cmds.splice(idx - 1, 0, moved)
+  loadingReorder.value = true
+  try {
+    await store.reorder(cmds.map((c) => c.id))
+  } finally {
+    loadingReorder.value = false
+  }
+}
+
+async function moveDown(idx: number) {
+  if (idx >= store.commands.length - 1) return
+  const cmds = [...store.commands]
+  const [moved] = cmds.splice(idx, 1)
+  cmds.splice(idx + 1, 0, moved)
+  loadingReorder.value = true
+  try {
+    await store.reorder(cmds.map((c) => c.id))
+  } finally {
+    loadingReorder.value = false
+  }
+}
 </script>
 
 <template>
@@ -39,14 +68,14 @@ function close() {
         <div
           class="relative w-full max-w-lg bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop flex flex-col"
         >
-          <!-- 顶部：标题 + 新增 / 关闭（文字按钮，并排右对齐） -->
-        <div class="flex items-center justify-between px-5 py-3 border-b border-line dark:border-line-dark">
-          <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('qc_title') }}</h3>
-          <div class="flex items-center gap-2">
-            <button class="g-btn-primary !h-8 px-4 text-sm" @click="emit('add')">{{ t('qc_add') }}</button>
-            <button class="g-btn-ghost !h-8 px-3 text-sm" @click="close">{{ t('qc_close') }}</button>
+          <!-- 顶部：标题 + 新增 / 关闭 -->
+          <div class="flex items-center justify-between px-5 py-3 border-b border-line dark:border-line-dark">
+            <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('qc_title') }}</h3>
+            <div class="flex items-center gap-2">
+              <button class="g-btn-primary !h-8 px-4 text-sm" @click="emit('add')">{{ t('qc_add') }}</button>
+              <button class="g-btn-ghost !h-8 px-3 text-sm" @click="close">{{ t('qc_close') }}</button>
+            </div>
           </div>
-        </div>
 
           <!-- 命令卡片列表 -->
           <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3 max-h-[50vh]">
@@ -60,9 +89,9 @@ function close() {
               {{ t('qc_empty') }}
             </div>
             <div
-              v-for="c in store.commands"
+              v-for="(c, idx) in store.commands"
               :key="c.id"
-              class="group rounded-lg border border-line dark:border-line-dark hover:border-brand/50 cursor-pointer transition-colors"
+              class="group rounded-lg border border-line dark:border-line-dark hover:border-brand/50 transition-colors cursor-pointer"
               :title="c.content"
               @click="emit('run', c)"
             >
@@ -78,7 +107,8 @@ function close() {
                 </div>
                 <p class="mt-1 text-xs font-mono text-ink-soft dark:text-ink-soft-dark truncate">{{ c.content }}</p>
               </div>
-              <div class="flex items-center gap-2 px-3.5 py-2 border-t border-line dark:border-line-dark">
+              <!-- 第二行：左侧 编辑/删除，右侧 上移/下移（SVG 图标） -->
+              <div class="flex items-center gap-1 px-3.5 py-2 border-t border-line dark:border-line-dark">
                 <button class="g-btn-ghost !h-7 !px-2.5 text-xs" :title="t('qc_edit')" @click.stop="emit('edit', c)">
                   {{ t('qc_edit') }}
                 </button>
@@ -88,6 +118,31 @@ function close() {
                   @click.stop="emit('delete', c)"
                 >
                   {{ t('qc_delete') }}
+                </button>
+                <div class="flex-1"></div>
+                <!-- 向上移动按钮（第一项不可上移） -->
+                <button
+                  v-if="idx > 0"
+                  class="g-btn-ghost !h-7 !px-2"
+                  :title="t('qc_move_up')"
+                  :disabled="loadingReorder"
+                  @click.stop="moveUp(idx)"
+                >
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 15l-6-6-6 6" />
+                  </svg>
+                </button>
+                <!-- 向下移动按钮（最后一项不可下移） -->
+                <button
+                  v-if="idx < store.commands.length - 1"
+                  class="g-btn-ghost !h-7 !px-2"
+                  :title="t('qc_move_down')"
+                  :disabled="loadingReorder"
+                  @click.stop="moveDown(idx)"
+                >
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
                 </button>
               </div>
             </div>
