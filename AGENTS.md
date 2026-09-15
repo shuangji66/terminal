@@ -39,12 +39,16 @@
 - `main.go` — 入口：解析环境 → 建目录（会话临时目录、快捷指令/用户模式文件目录）→
   unix socket 监听 → 等信号优雅退出：终止全部会话、删 socket、**删除会话临时目录**。
 - `config.go` — `RuntimeEnv` 全部来自环境变量（`TERMINAL_ADMIN_SOCK/BASEURL`、
-  `QUICK_CMDS_FILE`、`SESSION_DIR`、`USER_MODE_FILE`、`SHELL`、HOME/PATH/LANG）。
-- `admin.go` — Admin mux：`/api/*` 路由（info / sessions / session / session/clear /
-  quickcmds / user-mode）+ SPA（baseurl 注入）+ WebSocket `/terminal` 分发。
+  `QUICK_CMDS_FILE`、`SESSION_DIR`、`USER_MODE_FILE`、`APP_HOME_TEMPLATE`、
+  `APPCENTER_CLI`、`SHELL`、HOME/PATH/LANG）。
+- `admin.go` — Admin mux：`/api/*` 路由（info / sessions / apps / session /
+  session/clear / quickcmds / user-mode）+ SPA（baseurl 注入）+ WebSocket `/terminal`
+  分发。`/api/apps` 返回弹窗用的应用用户列表（含 `homeTemplate`，前端据此提示家目录，
+  不硬编码路径）。
 - `sessions.go` — 会话管理：每个会话一个 PTY + 历史临时文件（**必须以 `O_RDWR` 打开**，
   否则 attach 回放 / history API 读会 EBADF）；`resolveRunUser` 解析 `user=` 参数与
-  `X-Trim-Userid` 头（root / 指定 uid / NAS 用户），非当前 uid 用 `syscall.Credential`
+  `X-Trim-Userid` 头（root / `app:<APP NAME>` 应用用户 / 指定 uid / NAS 用户；
+  应用名非法或解析失败会**返回错误**，不再静默回退），非当前 uid 用 `syscall.Credential`
   切换用户；`attach` 在 `histMu` 内“回放历史 + 接管实时流”，保证字节不重不漏；
   pump 协程持续读 PTY → 追加历史文件 + 广播到已挂载连接。
 - `terminal.go` — WS 握手（自实现帧编解码）→ `id` 为空则新建（先发 `\x1b]id;<id>\x07`）
@@ -52,6 +56,13 @@
   客户端断开**只解挂载不杀会话**。
 - `quickcmds.go` — 快捷指令整体保存（tmp + rename 原子写，兼容旧版裸数组格式）。
 - `usermode.go` — 启动用户模式文件（`nas`|`root`|`custom`，非法回退 `nas`）。
+- `apps.go` — 应用用户（NAS 应用）支持：执行 `appcenter-cli list` 解析 **APP NAME**，
+  过滤 `trim.*` 系统软件与「无同名系统用户 / 家目录不存在」的应用，按名排序后供
+  `/api/apps` 返回；`resolveAppRunUser` 把 `app:<APP NAME>` 解析为 uid/gid/HOME
+  （模板 `TERMINAL_APP_HOME_TEMPLATE`，默认 `/var/apps/%s/home`）。
+  **该目录必须真实存在**——它是 `cmd.Dir` 与 `HOME`，不存在会导致 `pty.Start` 失败。
+  `listAppUsers` 对结果做**短缓存**（`appListTTL`）并限制命令超时（`appListTimeout`），
+  避免每次弹窗都拉起进程或被子进程卡死；`fetchAppList` 失败时回退 `scanAppRoot`。
 
 **前端（Vue 3，`frontend/`）**
 
@@ -85,8 +96,9 @@
    `document.baseURI`；后端 SPA 服务统一走 `rewriteIndexBase`。
 2. **不要硬编码平台路径**：一律经 `TERMINAL_*` 环境变量（socket / baseurl / 各类文件）。
 3. **会话用户逻辑不可回归**：新建会话的用户由**标签级 `Tab.userSpec`** 决定
-   （`wsUrl` 的 `user=` 参数），而非全局设置；恢复/挂载的会话保持原用户；
-   custom 模式每次新建必须弹 `UserPickDialog`。
+   （`wsUrl` 的 `user=` 参数：`nas` 不带参数 / `root` / `app:<APP NAME>`），而非全局设置；
+   恢复/挂载的会话保持原用户；custom 模式每次新建必须弹 `UserPickDialog`
+   （登录用户 / ROOT / 应用用户列表，**两个常规选项必须保留在列表上方**）。
 4. **标签关闭 = 唯一终止会话路径**：调用 `DELETE /api/session?id=`；浏览器断开只是
    “解挂载”，会话继续运行并写历史文件。
 5. **清屏必须同步**：前端 `term.clear()` 同时调用 `/api/session/clear` 截断历史文件。
@@ -120,6 +132,27 @@
   新建标签按正确用户模式（custom → 登录用户）。
 - **功能名折叠**：`labelsOn` 控制桌面功能名显示；仅**手动**展开（《》按钮），
   溢出**自动收起**；不要恢复旧的“宽度检测自动展开”逻辑。
+- **验证会话环境时的沙箱陷阱（曾导致误判）**：在沙箱/CI 里验证 `buildSessionEnv`，
+  测试进程（agent 的 shell）自带 `HOME`/`PWD`，二者会与函数构造的值**同名竞争**而
+  掩盖真实行为。部署环境（`trim_app_center.service` 无 `User=`/`Environment=`，
+  systemd 不注入 `HOME`）并不会这样。结论：验证这类逻辑必须**显式构造或清除**相关
+  变量，不要拿"当前 shell 的环境"当部署环境；也不要仅凭沙箱现象就判定线上有 bug。
+- **`appcenter-cli` 需要权限**：普通用户直接执行会
+  `panic: dial unix /run/trim_app_cgi/rpcbroker: permission denied`（该 socket 属
+  `OfficialAppUsers` 组）；后端以 root 运行时可正常执行，失败时 `apps.go` 会记录日志并
+  **回退扫描 `/var/apps`**，功能不至于完全不可用。
+- **应用用户的 HOME 必须自己赋予**：系统不会给应用用户设 HOME（`/etc/passwd` 里是
+  `/home/<app>`，但该目录并不存在）。`buildSessionEnv` 把 `HOME`/`PWD` 都设为
+  `/var/apps/<APP NAME>/home`——它既是 `cmd.Dir`，也是 `~` 的落点。两者必须一致，
+  否则 bash 提示符不会显示 `~`。
+- **HOME/PWD 必须唯一且不可被继承值覆盖**：环境变量重复时**后者生效**。后端由
+  appcenter 脚本经 bash 启动，父进程会导出 `HOME`/`PWD`，若直接 `append(os.Environ())`
+  就会顶掉我们设的值（实测后果：`HOME` 错误 + `PWD` 变成软链的物理路径
+  `/vol1/@apphome/<app>`，提示符显示完整路径而非 `~`）。故 `buildSessionEnv` 先从
+  继承环境里**剔除** `HOME`/`PWD` 再追加目标用户的值——新增需要强制的变量时请照此处理，
+  不要直接把 `os.Environ()` 追加到末尾。
+- **部分应用没有同名系统用户**（如 `Nvidia-Driver-580`、`fnpackup`、`trim.media`），
+  无法 setuid，已在 `/api/apps` 列表中被过滤掉——不要"修好"成显示出来。
 - **外部部署行为**：本仓库构建产物可能被外部部署机制移动/重启
   （如 `/vol1/@appcenter/Terminal/bin/terminal`），工作区二进制消失/更新属外部流程，
   不要误判为构建失败。
@@ -141,7 +174,10 @@ cd backend && go vet ./...    # 需要 backend/embed 存在（可先放占位文
 
 - [ ] 前端资源与 API/WS 是否走 `runtimeBase()` / `wsUrl()`？
 - [ ] 是否硬编码了 platform 路径 / baseurl？
-- [ ] 会话用户逻辑（`Tab.userSpec` → `user=` 参数）是否符合三个模式？
+- [ ] 会话用户逻辑（`Tab.userSpec` → `user=` 参数）是否符合三个模式（含 `app:<APP NAME>`）？
+- [ ] 应用用户：`HOME`、`PWD`、`cmd.Dir` 是否都取 `TERMINAL_APP_HOME_TEMPLATE` 的同一路径
+      （不一致会导致提示符不显示 `~`）？新增环境变量是否会被继承值覆盖？
+- [ ] 应用列表：新增过滤条件是否同步了 `usableAppUsers` 与 `/api/apps` 的语义？
 - [ ] 关闭标签 / 清屏是否走了对应 API？
 - [ ] 前端改动是否已重新构建（`make dev`）并验证？
 - [ ] 新增 Pinia store / composable 是否遵循现有结构？

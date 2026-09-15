@@ -18,8 +18,15 @@
   - `当前登录用户`（默认，网关 `X-Trim-Userid` 指定的 NAS 用户）
   - `ROOT`（切换需二次确认）
   - `自定义`：启动无会话可恢复时固定以登录用户建立会话；此后**每次新建终端弹窗选择**
-    登录用户 / ROOT。偏好持久化到 `TERMINAL_USER_MODE_FILE`。有会话可恢复时保持原
-    会话用户。
+    登录用户 / ROOT / **应用用户**。偏好持久化到 `TERMINAL_USER_MODE_FILE`。有会话可
+    恢复时保持原会话用户。
+- **以应用用户启动（NAS 应用）** — 自定义模式的弹窗会列出本机已安装应用：
+  后端执行 `appcenter-cli list` 解析 **APP NAME**（即系统里的应用用户名），
+  过滤系统软件（`trim.*`）与没有同名系统用户 / 家目录的应用，按名称排序后返回；
+  选中即以该用户进入 bash，**`HOME` 与工作目录都设为应用家目录
+  `/var/apps/<APP NAME>/home`**（模板可经 `TERMINAL_APP_HOME_TEMPLATE` 覆盖），
+  因此进入后 `~` 即该目录。系统不会给应用用户设置 HOME，必须由本终端赋予。
+  后端需以 root 运行方可 setuid 到应用用户。
 - **会话持久化与恢复** — 每个会话的终端输出实时镜像到**临时文件**（目录来自环境变量
   `TERMINAL_SESSION_DIR`），**应用停止时整目录自动清除**；前端刷新后从临时文件恢复
   会话历史并重新挂到原会话。**清屏同步清空**该临时历史文件，重连/刷新不再回放旧内容。
@@ -79,7 +86,8 @@
 │   ├── sessions.go          # 会话管理：PTY 会话（按用户运行/临时历史文件/挂载回放/清空/关闭）
 │   ├── terminal.go          # WebSocket 终端处理器（新建会话用户解析、挂载、resize、心跳）
 │   ├── quickcmds.go         # 快捷指令持久化 API
-│   └── usermode.go          # 启动用户模式（nas | root | custom）持久化 API
+│   ├── usermode.go          # 启动用户模式（nas | root | custom）持久化 API
+│   └── apps.go              # 应用用户：appcenter-cli list 解析/过滤，app:<APP NAME> 用户解析
 └── frontend/                # Vue 3 前端
     ├── index.html           # 注入 <base> 由后端运行时改写
     ├── vite.config.ts       # 相对 base（./assets/...）+ @tailwindcss/vite
@@ -128,11 +136,31 @@ baseurl 前缀下；也可直接 `curl --unix-socket` 访问或本地反代到 1
 | `TERMINAL_QUICK_CMDS_FILE` | 快捷指令持久化文件 | `$TMPDIR/terminal/quickcmds.json` |
 | `TERMINAL_SESSION_DIR` | 终端会话临时目录（**应用停止时整目录清除**） | `$TMPDIR/terminal/sessions` |
 | `TERMINAL_USER_MODE_FILE` | 启动用户模式（`nas`\|`root`\|`custom`）持久化文件 | `$TMPDIR/terminal/user-mode.json` |
+| `TERMINAL_APP_HOME_TEMPLATE` | 应用用户 HOME / 工作目录模板（`%s` = APP NAME） | `/var/apps/%s/home` |
+| `TERMINAL_APPCENTER_CLI` | 列出已安装应用的命令（失败时回退扫描应用根目录） | `appcenter-cli` |
 | `TERMINAL_SHELL` | 终端使用的 shell | `/bin/bash` |
 
 新终端会话以「当前登录用户」为默认：网关（nginx 等）在反代 unix socket 时附加
 `X-Trim-Userid: <uid>` 请求头，后端按该 uid 运行会话（非 root 进程无法 setuid，因此
 后端需以 root 启动）；`ROOT` 模式下新会话以 root 运行。
+
+### 应用用户（NAS 应用）的前置条件
+
+以应用用户（`app:<APP NAME>`）启动会话时：
+
+- **后端必须以 root 运行**：需要 `setuid` 到应用用户，非 root 会 `permission denied`。
+- **应用列表来自 `appcenter-cli list`**：该命令需要 `OfficialAppUsers` 组权限（socket
+  `/run/trim_app_cgi/rpcbroker`），普通用户直接执行会 panic。命令失败（未安装 / 无权限 /
+  输出为空）时后端记录日志并**回退扫描应用根目录**（由 `TERMINAL_APP_HOME_TEMPLATE`
+  反推，默认 `/var/apps`），功能不至于完全不可用。
+- **应用用户的家目录必须存在**：它同时作为会话的 `cmd.Dir` 与 `HOME`，不存在会让
+  `pty.Start` 失败，该应用会从列表中过滤掉。
+- **系统不会给应用用户设 HOME**（`/etc/passwd` 里的 `/home/<app>` 并不存在），
+  因此由本终端赋予 `HOME=/var/apps/<APP NAME>/home`；`HOME` 与 `cmd.Dir` 取同一路径，
+  进入 bash 后 `~` 即该目录。
+- **`HOME`/`PWD` 会从继承环境中剔除后再写入**：环境变量重复时后者生效，而父进程
+  （appcenter 脚本经 bash 启动）自带 `HOME`/`PWD`，若不清除会顶掉目标用户的值，
+  导致 `HOME` 错误、且符号链接家目录下提示符显示完整物理路径而非 `~`。
 
 以 root 运行，例如：
 
@@ -165,6 +193,7 @@ location /app/terminal/ {
 | `GET /api/user-mode` | 启动用户模式（`nas`\|`root`\|`custom`，含 `nasUser`） |
 | `POST /api/user-mode` | 持久化启动用户模式（非法值 400） |
 | `GET /api/sessions` | 活动会话列表（id/创建时间/最近活动/历史大小/是否退出） |
+| `GET /api/apps` | 可选的应用用户列表（`appcenter-cli list` 的 APP NAME，已过滤 `trim.*` 与不可用项） |
 | `GET /api/session/history?id=` | 会话历史内容（取末尾 ≤4MB） |
 | `POST /api/session/clear?id=` | **清空**会话历史临时文件（前端"清屏"同步调用） |
 | `DELETE /api/session?id=` | 终止会话（唯一终止路径；关闭标签页时调用） |
@@ -177,8 +206,10 @@ location /app/terminal/ {
 - **连接**：`WS /terminal?id=<id>`；`id` 为空时后端新建会话，并先回一帧
   `\x1b]id;<id>\x07` 通知前端取得会话 id；`id` 存在则先回放历史文件内容（≤4MB，
   每帧 ≤32KB），再发 `\x1b]ready\x07` 后进入实时流。
-- **新建会话的用户**：`WS /terminal?user=root` → 以 root 运行；不带 `user` 参数 →
-  以网关 `X-Trim-Userid` 指定的 NAS 用户运行；`user=<uid>` → 指定 uid。
+- **新建会话的用户**：`WS /terminal?user=root` → 以 root 运行；`user=app:<APP NAME>` →
+  以该 NAS 应用用户运行（`HOME` 与工作目录均为 `/var/apps/<APP NAME>/home`）；
+  不带 `user` 参数 → 以网关 `X-Trim-Userid` 指定的 NAS 用户运行；`user=<uid>` → 指定 uid。
+  解析失败（应用名非法 / 无同名系统用户 / 家目录不存在）时回一帧错误文本并关闭连接。
 - **数据**：文本帧双向；`\x1b]resize;<cols>;<rows>\x07` 调整 PTY 尺寸；
   `\x1b]ping\x07` 心跳不写入 PTY；进程退出时后端发 `\x1b]exit\x07` 控制帧。
 - **关闭**：浏览器断开只解除挂载、**不杀会话**（会话继续在服务器端运行并写入历史

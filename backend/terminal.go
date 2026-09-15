@@ -130,9 +130,15 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	id := r.URL.Query().Get("id")
 	if id == "" {
-		// 新建会话：解析“以哪个用户运行”（user=root | 空=NAS 用户 | 数字=uid），
-		// 目标 NAS 用户来自网关 unix sock 传递的 X-Trim-Userid 请求头。
-		runAs := resolveRunUser(r.URL.Query().Get("user"), r.Header.Get("X-Trim-Userid"))
+		// 新建会话：解析“以哪个用户运行”（user=root | app:<APP NAME> | 空=NAS 用户 |
+		// 数字=uid），目标 NAS 用户来自网关 unix sock 传递的 X-Trim-Userid 请求头。
+		runAs, uerr := resolveRunUser(t.mgr.renv, r.URL.Query().Get("user"), r.Header.Get("X-Trim-Userid"))
+		if uerr != nil {
+			conn.Write(wsFrame(opText, []byte("\r\n\x1b[31m"+uerr.Error()+"\x1b[0m\r\n")))
+			conn.Write(wsFrame(opClose, nil))
+			conn.Close()
+			return
+		}
 		s, cerr := t.mgr.create(runAs)
 		if cerr != nil {
 			conn.Write(wsFrame(opText, []byte("\r\n\x1b[31mcreate session failed: "+cerr.Error()+"\x1b[0m\r\n")))

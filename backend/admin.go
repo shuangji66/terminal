@@ -72,15 +72,18 @@ func (m *AdminMux) handleInfo(w http.ResponseWriter, r *http.Request) {
 			"lang":          m.renv.Lang,
 			// 网关 unix sock 传递的当前 NAS 用户（X-Trim-Userid），缺失时回退进程用户
 			"trimUid":    r.Header.Get("X-Trim-Userid"),
-			"nasUser":    nasUserInfo(r.Header.Get("X-Trim-Userid")),
+			"nasUser":    nasUserInfo(m.renv, r.Header.Get("X-Trim-Userid")),
 			"currentUid": os.Getuid(),
 		},
 	})
 }
 
 // nasUserInfo 解析网关通过 X-Trim-Userid 传递的当前 NAS 用户信息。
-func nasUserInfo(trimUID string) map[string]interface{} {
-	ru := resolveRunUser("nas", trimUID)
+func nasUserInfo(renv *RuntimeEnv, trimUID string) map[string]interface{} {
+	ru, err := resolveRunUser(renv, "nas", trimUID)
+	if err != nil {
+		return nil
+	}
 	return map[string]interface{}{
 		"uid":      ru.uid,
 		"gid":      ru.gid,
@@ -101,7 +104,7 @@ func (m *AdminMux) handleGetUserMode(w http.ResponseWriter, r *http.Request) {
 		"mode":        mode,
 		"path":        m.renv.UserModeFile,
 		"defaultMode": "nas",
-		"nasUser":     nasUserInfo(r.Header.Get("X-Trim-Userid")),
+		"nasUser":     nasUserInfo(m.renv, r.Header.Get("X-Trim-Userid")),
 	})
 }
 
@@ -128,6 +131,21 @@ func (m *AdminMux) handleSaveUserMode(w http.ResponseWriter, r *http.Request) {
 
 func (m *AdminMux) handleSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"ok": true, "sessions": m.sessions.list()})
+}
+
+// handleAppUsers 返回「以应用用户启动」弹窗的可选列表：appcenter-cli list 的
+// APP NAME，已过滤系统软件（trim.*）与没有系统用户/家目录的应用。
+func (m *AdminMux) handleAppUsers(w http.ResponseWriter, r *http.Request) {
+	apps, err := listAppUsers(m.renv)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":           true,
+		"apps":         apps,
+		"homeTemplate": m.renv.AppHomeTpl,
+	})
 }
 
 func (m *AdminMux) handleSessionHistory(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +294,8 @@ func (m *AdminMux) buildHandler() http.Handler {
 			m.handleInfo(w, r)
 		case p == "/api/sessions" && r.Method == http.MethodGet:
 			m.handleSessions(w, r)
+		case p == "/api/apps" && r.Method == http.MethodGet:
+			m.handleAppUsers(w, r)
 		case p == "/api/session/history" && r.Method == http.MethodGet:
 			m.handleSessionHistory(w, r)
 		case p == "/api/session" && r.Method == http.MethodDelete:

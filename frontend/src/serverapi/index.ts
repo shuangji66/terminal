@@ -25,7 +25,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // wsUrl builds the WebSocket URL for the terminal endpoint, under the runtime
 // base path. id 为空且未指定用户时后端新建会话（以持久化的启动用户模式为准）。
-// user 参数："root" → 以 root 运行；省略 → 默认 NAS 用户（后端读 X-Trim-Userid）。
+// user 参数："root" → 以 root 运行；"app:<APP NAME>" → 以该 NAS 应用用户运行
+// （HOME 与工作目录均为 /var/apps/<APP NAME>/home）；省略 → 默认 NAS 用户
+// （后端读 X-Trim-Userid）。
 export function wsUrl(id?: string, user?: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   let query = ''
@@ -81,12 +83,21 @@ export interface NasUserInfo {
 
 export type UserMode = 'nas' | 'root' | 'custom'
 
-// 单个标签会话的运行用户
-export type UserSpec = 'nas' | 'root'
+// 单个标签会话的运行用户："nas"（登录用户）/ "root" / "app:<APP NAME>"（NAS 应用用户）
+export type UserSpec = 'nas' | 'root' | `app:${string}`
+
+// 新建终端时可选的 NAS 应用用户（APP NAME = 系统里的应用用户名）
+export interface AppUserInfo {
+  name: string
+  displayName?: string
+}
 
 export const api = {
   info: () => request<{ ok: boolean; runtime: RuntimeInfo }>('/api/info'),
   sessions: () => request<{ ok: boolean; sessions: SessionInfo[] }>('/api/sessions'),
+  // 应用用户列表（appcenter-cli list 解析结果，后端已过滤 trim.* 与不可用项）
+  appUsers: () =>
+    request<{ ok: boolean; apps: AppUserInfo[]; homeTemplate: string }>('/api/apps'),
   sessionHistory: (id: string) =>
     request<{ ok: boolean; id: string; size: number; content: string }>(
       '/api/session/history?id=' + encodeURIComponent(id)

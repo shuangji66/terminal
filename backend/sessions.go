@@ -65,14 +65,19 @@ type runUser struct {
 
 // resolveRunUser 决定新会话以哪个用户运行：
 //   - userSpec == "root" → root 用户（uid 0）
+//   - userSpec == "app:<APP NAME>" → NAS 应用用户（appcenter-cli list 的 APP NAME），
+//     以应用家目录 /var/apps/<APP NAME>/home 为工作目录并作为 HOME
 //   - userSpec 为空 / "nas" → 网关 unix sock 传递的 X-Trim-Userid 指定的 NAS 用户
 //     （头缺失时回退当前进程用户）
 //   - userSpec 为数字 → 指定 uid
 //
 // 通过 /etc/passwd（os/user.LookupId）解析用户名与家目录；无条目时回退。
-func resolveRunUser(userSpec, trimUID string) *runUser {
+func resolveRunUser(renv *RuntimeEnv, userSpec, trimUID string) (*runUser, error) {
 	if userSpec == "root" {
-		return &runUser{uid: 0, gid: 0, home: "/root", username: "root"}
+		return &runUser{uid: 0, gid: 0, home: "/root", username: "root"}, nil
+	}
+	if name, ok := strings.CutPrefix(userSpec, appUserSpecPrefix); ok {
+		return resolveAppRunUser(renv, name)
 	}
 	uidStr := ""
 	if userSpec == "" || userSpec == "nas" {
@@ -101,28 +106,41 @@ func resolveRunUser(userSpec, trimUID string) *runUser {
 	if home == "" {
 		home = "/home/" + uidStr
 	}
-	return &runUser{uid: uid, gid: gid, home: home, username: name}
+	return &runUser{uid: uid, gid: gid, home: home, username: name}, nil
 }
 
 // buildSessionEnv 构建 shell 会话环境：目标用户的 HOME/PATH，强制 UTF-8 语义。
+//
+// HOME/PWD 必须是**唯一**的一项：环境变量重复时后者生效，而父进程（由 appcenter
+// 脚本用 bash 启动，会导出 HOME/PWD）的值会覆盖本函数的赋值。若被覆盖，后果是
+// HOME 指向错误、且 bash 的 PWD 变成物理路径——符号链接家目录下提示符将显示完整
+// 路径而非 `~`。故先从继承环境中剔除 HOME/PWD，再写入目标用户的值。
 func buildSessionEnv(renv *RuntimeEnv, shell string, runAs *runUser) []string {
 	home := renv.Home
 	if runAs != nil && runAs.home != "" {
 		home = runAs.home
 	}
-	env := []string{
-		"HOME=" + home,
-		"PATH=" + renv.Path,
-		"TERM=xterm-256color",
-		"LANG=" + localeLang(renv.Lang),
-		"COLORTERM=truecolor",
-		"PWD=" + home,
-		"SHELL=" + shell,
+	inherited := os.Environ()
+	env := make([]string, 0, len(inherited)+8)
+	for _, e := range inherited {
+		if strings.HasPrefix(e, "HOME=") || strings.HasPrefix(e, "PWD=") {
+			continue
+		}
+		env = append(env, e)
 	}
+	env = append(env,
+		"HOME="+home,
+		"PWD="+home,
+		"PATH="+renv.Path,
+		"TERM=xterm-256color",
+		"LANG="+localeLang(renv.Lang),
+		"COLORTERM=truecolor",
+		"SHELL="+shell,
+	)
 	if runAs != nil && runAs.username != "" {
 		env = append(env, "USER="+runAs.username, "LOGNAME="+runAs.username)
 	}
-	return append(env, os.Environ()...)
+	return env
 }
 
 func (s *Session) markActive() {
@@ -296,7 +314,11 @@ func newID() string {
 // runAs 决定会话以哪个用户运行（nil → 当前进程用户）。
 func (m *SessionManager) create(runAs *runUser) (*Session, error) {
 	if runAs == nil {
-		runAs = resolveRunUser("", "")
+		var err error
+		runAs, err = resolveRunUser(m.renv, "", "")
+		if err != nil {
+			return nil, err
+		}
 	}
 	id := newID()
 	fname := filepath.Join(m.renv.SessionDir, id+".log")

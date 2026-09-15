@@ -13,6 +13,8 @@ type RuntimeEnv struct {
 	QuickCmdsFile string // TERMINAL_QUICK_CMDS_FILE 快捷指令持久化文件
 	SessionDir    string // TERMINAL_SESSION_DIR    终端会话临时目录（应用停止时整目录清除）
 	UserModeFile  string // TERMINAL_USER_MODE_FILE 启动用户模式持久化文件（nas|root）
+	AppHomeTpl    string // TERMINAL_APP_HOME_TEMPLATE 应用用户 HOME 模板（%s=APP NAME）
+	AppCenterCLI  string // TERMINAL_APPCENTER_CLI  列出已安装应用的命令
 	Shell         string // TERMINAL_SHELL           终端使用的 shell
 	Home          string // 运行用户（root）的 HOME
 	Path          string // PATH
@@ -44,6 +46,8 @@ func loadRuntimeEnv() RuntimeEnv {
 		QuickCmdsFile: envOr("TERMINAL_QUICK_CMDS_FILE", filepath.Join(base, "quickcmds.json")),
 		SessionDir:    envOr("TERMINAL_SESSION_DIR", filepath.Join(base, "sessions")),
 		UserModeFile:  envOr("TERMINAL_USER_MODE_FILE", filepath.Join(base, "user-mode.json")),
+		AppHomeTpl:    envOr("TERMINAL_APP_HOME_TEMPLATE", "/var/apps/%s/home"),
+		AppCenterCLI:  envOr("TERMINAL_APPCENTER_CLI", "appcenter-cli"),
 		Shell:         envOr("TERMINAL_SHELL", "/bin/bash"),
 		Home:          home,
 		Path:          os.Getenv("PATH"),

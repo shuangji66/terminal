@@ -253,8 +253,10 @@ function openSocket() {
   lastSentCols = 0
   lastSentRows = 0
   // 新建会话（无 id）时按本标签的 userSpec 决定运行用户：
-  // root → user=root；nas（默认）→ 不带 user 参数，后端读网关 X-Trim-Userid。
-  const userParam = props.tab.id ? undefined : props.tab.userSpec === 'root' ? 'root' : undefined
+  // root → user=root；app:<APP NAME> → user=app:<APP NAME>（NAS 应用用户）；
+  // nas（默认）→ 不带 user 参数，后端读网关 X-Trim-Userid。
+  const spec = props.tab.userSpec
+  const userParam = props.tab.id || spec === 'nas' ? undefined : spec
   const url = wsUrl(props.tab.id ?? undefined, userParam)
   sock = new WebSocket(url)
   sock.binaryType = 'arraybuffer'
