@@ -56,9 +56,9 @@
 | 层 | 技术 |
 | --- | --- |
 | 后端 | Go ≥ 1.27（标准库 + `github.com/creack/pty`，按 uid 切换用户） |
-| 前端 | Vue 3.5（Composition API / `<script setup>`）+ TypeScript 7 + Vite 8 |
+| 前端 | Vue 3.5（Composition API / `<script setup>`）+ TypeScript 6 + Vite 8 |
 | 前端构建 | Tailwind CSS v4（`@tailwindcss/vite`）、Pinia 4、xterm.js v6（fit/webgl/search/web-links/clipboard/unicode11/serialize/image） |
-| 类型检查 | `npm run type-check`（`tsc --noEmit`，TS 7 原生编译器；`.vue` 模板以构建期检查为准，vue-tsc 与 TS 7 暂不兼容） |
+| 类型检查 | `npm run type-check`（`vue-tsc --noEmit`，覆盖 `.vue` 的 script 与 template + 全部 `.ts`；锁定 TypeScript 6.x，TS 7 与 vue-tsc 不兼容） |
 | 通信 | Unix Socket、HTTP JSON API、WebSocket（终端） |
 | 运行用户 | **root**（后端为 root 方可 setuid 以 NAS 用户/root 运行会话） |
 
@@ -111,7 +111,7 @@ make clean      # 清理构建产物
 
 cd frontend && npm run dev        # 仅前端热更（配合后端调试）
 cd frontend && npm run build      # 前端构建
-cd frontend && npm run type-check # 类型检查（仅 .ts；.vue 依赖构建期检查）
+cd frontend && npm run type-check # 类型检查（vue-tsc：.ts + .vue 的 script 与 template）
 ```
 
 ---

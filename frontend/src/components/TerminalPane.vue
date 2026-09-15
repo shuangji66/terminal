@@ -46,7 +46,6 @@ let disposed = false
 const HEARTBEAT_INTERVAL_MS = 20000
 let heartbeatTimer: number | null = null
 let resizeObserver: ResizeObserver | null = null
-let resizeTimeout: number | null = null
 let fitRetryTimer: number | null = null
 let onPasteEvent: ((ev: ClipboardEvent) => void) | null = null
 let toastTimer: number | null = null
@@ -250,6 +249,9 @@ function disconnect() {
 function openSocket() {
   if (disposed) return
   disconnect()
+  // 新连接对应新的 PTY（或重挂载的旧 PTY），上次下发的尺寸不再成立，需重新下发
+  lastSentCols = 0
+  lastSentRows = 0
   // 新建会话（无 id）时按本标签的 userSpec 决定运行用户：
   // root → user=root；nas（默认）→ 不带 user 参数，后端读网关 X-Trim-Userid。
   const userParam = props.tab.id ? undefined : props.tab.userSpec === 'root' ? 'root' : undefined
@@ -323,10 +325,33 @@ function stopHeartbeat() {
 }
 
 // ---------- 尺寸适配 ----------
+// 桌面拖动窗口、移动端虚拟键盘起落都会让容器尺寸连续变化几十上百帧，而
+// ResizeObserver 是逐帧回调的。若每次回调都 fit()，xterm 会逐帧 clear() 清屏、
+// 重建 WebGL 字形图集并下发 resize（后端随即 SIGWINCH，shell 整屏重绘），
+// 表现为终端区域闪烁 + 字体闪烁。因此把「尺寸变化」与「重排」解耦：
+//   1) 变化期间只记录，不 fit、不发 resize（此时 canvas 被容器裁剪，画面静止）；
+//   2) 尺寸稳定（静默 FIT_IDLE_MS）或连续变化超过 FIT_MAX_WAIT_MS 时，才 fit 一次；
+//   3) 下发前比对 cols/rows，与上次相同则不发，避免无谓的 SIGWINCH 重绘。
+const FIT_IDLE_MS = 160
+const FIT_MAX_WAIT_MS = 800
+let fitSettleTimer: number | null = null
+let fitDeadlineTimer: number | null = null
+// 最近一次下发给后端的 cols/rows：尺寸未变则不重复下发，避免无谓的 SIGWINCH 重绘
+let lastSentCols = 0
+let lastSentRows = 0
+
 function sendResize(cols: number, rows: number) {
-  if (sock && sock.readyState === WebSocket.OPEN) sock.send(resizePayload(cols, rows))
+  if (cols === lastSentCols && rows === lastSentRows) return
+  // 未连接时不记录：连接建立后（onopen → fitAndResize）会重新下发，
+  // 否则会把「没发出去」当成「已发过」，导致前端尺寸与 PTY 尺寸不一致。
+  if (!sock || sock.readyState !== WebSocket.OPEN) return
+  lastSentCols = cols
+  lastSentRows = rows
+  sock.send(resizePayload(cols, rows))
 }
 
+// 重排一次：只在尺寸稳定后调用，或标签激活 / 字号变化 / 连接建立等明确的单次场景。
+// fit() 内部在 cols/rows 变化时会 clear() 清屏并重建渲染模型，因此绝不能逐帧调用。
 function fitAndResize() {
   if (!fitAddon || !term || !el.value) return
   try {
@@ -352,12 +377,41 @@ function fitAndResize() {
   }
 }
 
+function cancelPendingFit() {
+  if (fitSettleTimer !== null) {
+    clearTimeout(fitSettleTimer)
+    fitSettleTimer = null
+  }
+  if (fitDeadlineTimer !== null) {
+    clearTimeout(fitDeadlineTimer)
+    fitDeadlineTimer = null
+  }
+}
+
+// 尺寸变化入口（ResizeObserver / window.resize）：把「稳定后重排」的定时器不断后推，
+// 变化期间不重排。连续变化超过 FIT_MAX_WAIT_MS 时兜底重排一次，避免长按拖动窗口
+// 时终端长时间停在旧尺寸。
 function debouncedFit() {
-  if (resizeTimeout) cancelAnimationFrame(resizeTimeout)
-  resizeTimeout = requestAnimationFrame(() => {
+  if (disposed) return
+  if (fitSettleTimer !== null) clearTimeout(fitSettleTimer)
+  fitSettleTimer = window.setTimeout(() => {
+    fitSettleTimer = null
+    if (fitDeadlineTimer !== null) {
+      clearTimeout(fitDeadlineTimer)
+      fitDeadlineTimer = null
+    }
     fitAndResize()
-    resizeTimeout = null
-  })
+  }, FIT_IDLE_MS)
+  if (fitDeadlineTimer === null) {
+    fitDeadlineTimer = window.setTimeout(() => {
+      fitDeadlineTimer = null
+      if (fitSettleTimer !== null) {
+        clearTimeout(fitSettleTimer)
+        fitSettleTimer = null
+      }
+      fitAndResize()
+    }, FIT_MAX_WAIT_MS)
+  }
 }
 
 // ---------- 辅助键（KeypadBar 事件桥接） ----------
@@ -794,7 +848,7 @@ onBeforeUnmount(() => {
   } else {
     window.removeEventListener('resize', debouncedFit)
   }
-  if (resizeTimeout) cancelAnimationFrame(resizeTimeout)
+  cancelPendingFit()
   term?.dispose()
   term = null
 })
@@ -807,7 +861,7 @@ onBeforeUnmount(() => {
          左侧与下方各加 10px 边框（颜色跟随终端区域颜色），无分隔线 -->
     <div
       ref="el"
-      class="term-container flex-1 min-h-0 relative dark:bg-[#1A1A1A] dark:text-[#4EC9B0]
+      class="term-container flex-1 min-h-0 relative bg-[#faf5e9] dark:bg-[#1A1A1A] dark:text-[#4EC9B0]
              border-l-[10px] border-b-[10px]
              border-[#faf5e9] dark:border-[#1A1A1A]"
       @touchstart="onTouchStart"

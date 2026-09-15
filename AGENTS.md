@@ -104,9 +104,14 @@
   会得到 `bad file descriptor`（EBADF）。
 - **PTY 按用户切换依赖 root**：非 root 进程对 `user=root` 或不同 uid 会 `permission
   denied`，属预期；沙箱/CI 中只能验证「当前用户」路径与 API 层。
-- **vue-tsc 与 TypeScript 7 不兼容**（TS7 移除 `./lib/tsc`）：`type-check` 用
-  `tsc --noEmit` 且 `tsconfig.json` **不包含** `.vue` 文件——`.vue` 的脚本/模板错误
-  只能在 `vite build` 阶段暴露，改完务必构建。
+- **TypeScript 锁 6.x，不要升到 7**：vue-tsc 3.x 的 peer 是 `typescript >=5.0.0`，但 TS7
+  移除了 `./lib/tsc`，vue-tsc 依赖它做类型检查，升到 7 会直接跑不起来。当前组合
+  `typescript@6.0.3` + `vue-tsc@3.3.11`，`type-check` 用 `vue-tsc --noEmit -p tsconfig.json`。
+- **`tsconfig.json` 的 `include` 要含 `src/**/*.vue`**：虽然 vue-tsc 会沿 import 图从
+  `src/main.ts` 把 `.vue` 拉进来检查，但显式 include 才能覆盖未被任何模块 import 的
+  `.vue`，别退回只写 `src/**/*.ts`。
+- **`env.d.ts` 的 `declare module '*.vue'` shim 不会削弱检查**：vue-tsc 走真实 SFC 类型，
+  实测 props 类型（如 `:ctrl="'yes'"` 传错类型）与模板未定义变量都能报出，无需删 shim。
 - **addon-canvas 不要加回**：其 peer 仍是 `@xterm/xterm@^5`，与 xterm v6 冲突；
   WebGL 不可用时由 xterm 内置 DOM 渲染器兜底。
 - **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
@@ -140,5 +145,5 @@ cd backend && go vet ./...    # 需要 backend/embed 存在（可先放占位文
 - [ ] 关闭标签 / 清屏是否走了对应 API？
 - [ ] 前端改动是否已重新构建（`make dev`）并验证？
 - [ ] 新增 Pinia store / composable 是否遵循现有结构？
-- [ ] `.vue` 是否通过 `vite build`？（tsc 不查 .vue）
+- [ ] `npm run type-check`（vue-tsc）与 `vite build` 是否都通过？
 - [ ] 版本号是否经 `-ldflags` 注入？

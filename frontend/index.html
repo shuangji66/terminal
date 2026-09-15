@@ -2,9 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- interactive-widget=resizes-content：虚拟键盘弹出时让布局视口随之收缩（而非仅
+         收缩可视视口再由浏览器滚动定位输入点）。这样高度单位与终端容器平滑跟随键盘，
+         不会出现整块界面被推走的跳动。Chrome 108+/Firefox 132+ 支持，其他浏览器忽略。 -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Terminal</title>
     <meta name="theme-color" content="#FAFAFA" />

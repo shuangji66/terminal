@@ -16,6 +16,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "env.d.ts"],
+  "include": ["src/**/*.ts", "src/**/*.vue", "env.d.ts"],
   "references": []
 }

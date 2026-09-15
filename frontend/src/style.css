@@ -106,10 +106,33 @@ body {
   -ms-overflow-style: none;
 }
 
-/* 终端容器：保持零干扰，xterm 自行管理尺寸 */
+/* 终端容器：保持零干扰，xterm 自行管理尺寸。
+ * - overflow: clip（而非 hidden）：clip 不产生「可编程滚动」的滚动容器。若用 hidden，
+ *   移动端虚拟键盘弹出时浏览器为把获得焦点的隐藏 textarea 拉入可视区，会去滚动最近的
+ *   滚动容器，把顶栏与终端区域整体推走，表现为区域跳动闪烁。
+ * - 纵向 flex + 底部对齐：尺寸变化到重新 fit 之间有空档，此期间画布可能暂时大于容器，
+ *   底部对齐保证光标行（通常在最底部）始终可见，只裁掉多余顶部。
+ * - 画布用 flex: none：不让它被 flex 压缩，容器尺寸仍由外层 flex 决定，超出部分被裁剪。 */
 .term-container {
   height: 100%;
   width: 100%;
+  overflow: hidden; /* 兜底：不支持 overflow: clip 的旧浏览器（Safari < 16）至少能裁剪 */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* clip 的差别在于「不产生可编程滚动的滚动容器」：若停在 hidden，移动端虚拟键盘弹出时
+ * 浏览器为把获得焦点的隐藏 textarea 拉入可视区，会去滚动最近的滚动容器，把顶栏与终端
+ * 区域整体推走，表现为区域跳动闪烁。@supports 保证新旧浏览器都能正确裁剪。 */
+@supports (overflow: clip) {
+  .term-container {
+    overflow: clip;
+  }
+}
+
+.term-container > .xterm {
+  flex: none;
 }
 
 /* 终端复制/粘贴反馈气泡 */
