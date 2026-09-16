@@ -857,7 +857,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-bg dark:bg-bg-dark">
+  <div class="flex flex-col h-full min-h-0 overflow-hidden bg-bg dark:bg-bg-dark">
     <!-- 终端容器（相对定位，承载复制提示气泡、搜索悬浮框、系统文字工具） -->
     <!-- 深色模式下 terminal-area 背景为 #1A1A1A、文字为 #4EC9B0；浅色模式下背景为米黄色#faf5e9、文字为#1a1814
          左侧与下方各加 10px 边框（颜色跟随终端区域颜色），无分隔线 -->

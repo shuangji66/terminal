@@ -190,10 +190,11 @@ function titleOf(uid: string): string {
 
 <template>
   <header
-    class="shrink-0 bg-white dark:bg-surface-dark border-b border-line dark:border-line-dark"
+    class="relative z-10 shrink-0 bg-white dark:bg-surface-dark border-b border-line dark:border-line-dark"
   >
-    <!-- 第一行：新建（常驻左侧）+ 标签条 + 右侧控制 -->
-    <div class="flex items-center gap-1.5 sm:gap-3 h-12 px-2 sm:px-3" style="padding-top: env(safe-area-inset-top, 0px)">
+    <!-- 第一行：新建（常驻左侧）+ 标签条 + 右侧控制。
+         顶部安全区作为额外高度加入，避免刘海屏上固定 h-12 后内容被压向第二栏。 -->
+    <div class="tabbar-primary flex items-center gap-1.5 sm:gap-3 px-2 sm:px-3">
       <!-- 新建标签：常驻左侧，不随标签增多被滚动隐藏 -->
       <div class="flex items-center shrink-0">
         <button
@@ -338,9 +339,10 @@ function titleOf(uid: string): string {
       </div>
     </div>
 
-      <!-- 移动端第二行：左侧 设置；右侧 复制/粘贴/清屏/重连/快捷指令（搜索移动端屏蔽）；与标签行以轻微色差分隔 -->
+    <!-- 移动端第二行：左侧设置；右侧粘贴/清屏/重连/快捷指令。
+         使用明确最小高度和上下内边距，让按钮与分隔线始终留出空间。 -->
     <div
-      class="flex md:hidden items-center justify-between gap-0.5 px-2 pb-1.5 bg-black/[0.03] dark:bg-white/[0.04] border-t border-line/70 dark:border-line-dark/70"
+      class="flex md:hidden min-h-10 items-center justify-between gap-0.5 px-2 py-1.5 bg-black/[0.03] dark:bg-white/[0.04] border-t border-line/70 dark:border-line-dark/70"
     >
       <!-- 左：设置（主题/语言已移入设置弹窗） -->
       <div class="flex items-center gap-0.5">

@@ -48,6 +48,23 @@ body,
   margin: 0;
 }
 
+/* 应用壳优先使用动态视口高度；旧版移动浏览器不支持 dvh 时回退到 100%。 */
+.app-shell {
+  height: 100%;
+}
+
+@supports (height: 100dvh) {
+  .app-shell {
+    height: 100dvh;
+  }
+}
+
+/* 顶栏第一行的 48px 是内容高度，刘海安全区必须额外增加，不能包含在固定高度内。 */
+.tabbar-primary {
+  min-height: calc(3rem + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

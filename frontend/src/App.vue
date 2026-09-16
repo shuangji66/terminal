@@ -117,11 +117,11 @@ async function handleReorder(orderedIds: string[]) {
 </script>
 
 <template>
-  <div class="h-dvh flex flex-col bg-bg dark:bg-bg-dark text-ink dark:text-ink-dark overflow-hidden">
+  <div class="app-shell flex flex-col bg-bg dark:bg-bg-dark text-ink dark:text-ink-dark overflow-hidden">
     <TabBar @quick-cmds="qcVisible = true" @settings="settingsVisible = true" />
 
     <!-- 终端面板区：每个标签一个面板，非激活用 visibility 隐藏（保持尺寸与 WS 存活） -->
-    <main class="flex-1 min-h-0 relative">
+    <main class="flex-1 min-h-0 relative z-0 isolate overflow-hidden">
       <TerminalPane
         v-for="tab in store.tabs"
         :key="tab.uid"

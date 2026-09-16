@@ -63,7 +63,7 @@ const modOnCls = '!bg-brand !text-white'
 
 <template>
   <div
-    class="flex md:hidden flex-col gap-1 px-2 pt-1.5 bg-bg dark:bg-bg-dark border-t border-line dark:border-line-dark select-none"
+    class="flex md:hidden shrink-0 flex-col gap-1 px-2 pt-1.5 bg-bg dark:bg-bg-dark border-t border-line dark:border-line-dark select-none"
     style="touch-action: manipulation; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px)"
     @touchstart.prevent.stop
   >
