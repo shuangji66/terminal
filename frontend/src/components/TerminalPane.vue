@@ -858,11 +858,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col h-full min-h-0 overflow-hidden bg-bg dark:bg-bg-dark">
-    <!-- 终端容器（相对定位，承载复制提示气泡、搜索悬浮框、系统文字工具） -->
+    <!-- 终端容器：只负责外层视觉留白与裁剪，xterm 挂在内层挂载层上 -->
     <!-- 深色模式下 terminal-area 背景为 #1A1A1A、文字为 #4EC9B0；浅色模式下背景为米黄色#faf5e9、文字为#1a1814
          左侧与下方各加 10px 边框（颜色跟随终端区域颜色），无分隔线 -->
     <div
-      ref="el"
       class="term-container flex-1 min-h-0 relative bg-[#faf5e9] dark:bg-[#1A1A1A] dark:text-[#4EC9B0]
              border-l-[10px] border-b-[10px]
              border-[#faf5e9] dark:border-[#1A1A1A]"
@@ -871,54 +870,58 @@ onBeforeUnmount(() => {
       @touchend="onTouchEnd"
       @touchcancel="onTouchEnd"
     >
-      <div
-        class="term-copy-toast absolute bottom-2 right-2 z-30 px-3 py-1.5 rounded-md bg-black/70 text-white text-xs font-medium shadow-card opacity-0 pointer-events-none transition-opacity duration-200 whitespace-nowrap"
-      ></div>
+      <!-- xterm 挂载层：绝对定位铺满外层内容盒，自身无 border / padding。
+           FitAddon 按本层尺寸换算行列，故外层的 10px 视觉边框不会被算进可用高度。 -->
+      <div ref="el" class="term-mount">
+        <div
+          class="term-copy-toast absolute bottom-2 right-2 z-30 px-3 py-1.5 rounded-md bg-black/70 text-white text-xs font-medium shadow-card opacity-0 pointer-events-none transition-opacity duration-200 whitespace-nowrap"
+        ></div>
 
-      <!-- 搜索悬浮框（仅桌面端按钮触发）：输入框 + ↑↓ + 计数(2/7) + 关闭 -->
-      <div
-        v-if="searchOpen"
-        class="absolute top-2 right-2 z-40 flex items-center gap-1 rounded-lg bg-surface dark:bg-surface-dark border border-line dark:border-line-dark shadow-pop px-2 py-1.5"
-        @mousedown.stop
-      >
-        <input
-          ref="searchInput"
-          v-model="searchTerm"
-          class="w-28 sm:w-44 bg-transparent outline-none text-sm text-ink dark:text-ink-dark placeholder:text-ink-faint"
-          :placeholder="t('act_search')"
-          spellcheck="false"
-          autocomplete="off"
-          @keydown="onSearchKeydown"
-        />
-        <span class="text-xs font-mono text-ink-faint dark:text-ink-faint-dark whitespace-nowrap">{{ searchLabel }}</span>
-        <button
-          class="w-7 h-7 flex items-center justify-center rounded-md text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5"
-          :title="t('act_search') + ' ↑'"
-          @click="searchPrev"
+        <!-- 搜索悬浮框（仅桌面端按钮触发）：输入框 + ↑↓ + 计数(2/7) + 关闭 -->
+        <div
+          v-if="searchOpen"
+          class="absolute top-2 right-2 z-40 flex items-center gap-1 rounded-lg bg-surface dark:bg-surface-dark border border-line dark:border-line-dark shadow-pop px-2 py-1.5"
+          @mousedown.stop
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
-            <path d="m18 15-6-6-6 6" />
-          </svg>
-        </button>
-        <button
-          class="w-7 h-7 flex items-center justify-center rounded-md text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5"
-          :title="t('act_search') + ' ↓'"
-          @click="searchNext"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </button>
-        <button
-          class="w-7 h-7 flex items-center justify-center rounded-md text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5"
-          :title="t('tab_close')"
-          @click="closeSearch"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+          <input
+            ref="searchInput"
+            v-model="searchTerm"
+            class="w-28 sm:w-44 bg-transparent outline-none text-sm text-ink dark:text-ink-dark placeholder:text-ink-faint"
+            :placeholder="t('act_search')"
+            spellcheck="false"
+            autocomplete="off"
+            @keydown="onSearchKeydown"
+          />
+          <span class="text-xs font-mono text-ink-faint dark:text-ink-faint-dark whitespace-nowrap">{{ searchLabel }}</span>
+          <button
+            class="w-7 h-7 flex items-center justify-center rounded-md text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5"
+            :title="t('act_search') + ' ↑'"
+            @click="searchPrev"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+              <path d="m18 15-6-6-6 6" />
+            </svg>
+          </button>
+          <button
+            class="w-7 h-7 flex items-center justify-center rounded-md text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5"
+            :title="t('act_search') + ' ↓'"
+            @click="searchNext"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+          <button
+            class="w-7 h-7 flex items-center justify-center rounded-md text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5"
+            :title="t('tab_close')"
+            @click="closeSearch"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 

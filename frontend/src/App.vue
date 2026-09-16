@@ -121,7 +121,7 @@ async function handleReorder(orderedIds: string[]) {
     <TabBar @quick-cmds="qcVisible = true" @settings="settingsVisible = true" />
 
     <!-- 终端面板区：每个标签一个面板，非激活用 visibility 隐藏（保持尺寸与 WS 存活） -->
-    <main class="flex-1 min-h-0 relative z-0 isolate overflow-hidden">
+    <main class="flex-1 min-h-0 relative">
       <TerminalPane
         v-for="tab in store.tabs"
         :key="tab.uid"

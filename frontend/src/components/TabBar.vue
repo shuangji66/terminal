@@ -190,7 +190,7 @@ function titleOf(uid: string): string {
 
 <template>
   <header
-    class="relative z-10 shrink-0 bg-white dark:bg-surface-dark border-b border-line dark:border-line-dark"
+    class="shrink-0 bg-white dark:bg-surface-dark border-b border-line dark:border-line-dark"
   >
     <!-- 第一行：新建（常驻左侧）+ 标签条 + 右侧控制。
          顶部安全区作为额外高度加入，避免刘海屏上固定 h-12 后内容被压向第二栏。 -->
