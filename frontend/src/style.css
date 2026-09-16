@@ -150,6 +150,10 @@ body {
 
 /* xterm 挂载层：铺满外层内容盒（inset: 0 相对 padding box，不含边框），自身无 border/padding，
  * 于是 FitAddon 量到的高度 == 真实可用高度。
+ * 顶部对齐（flex-start）：行数取整后 canvas 高度不可能恰好等于容器高度，余量（0 ~ cellH-1 px）
+ * 必须落在某一侧。若底部对齐（flex-end），余量全部堆在顶栏下方，视觉上就是一条明显的空隙；
+ * 顶部对齐则把余量留在下方，与 10px 同色底边框合并，不易察觉。
+ * （旧实现之所以「没有空隙」，是因为多算边框导致画布恒高于可用高度、顶部被裁——那正是要修的 bug。）
  * overflow 同样优先用 clip：hidden 会产生「可编程滚动」容器，移动端虚拟键盘弹出时浏览器
  * 为把获得焦点的隐藏 textarea 拉入可视区会滚动它（与 .term-container 同一坑）。 */
 .term-mount {
@@ -160,7 +164,7 @@ body {
   bottom: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
   overflow: hidden; /* 旧浏览器兜底 */
 }
 
