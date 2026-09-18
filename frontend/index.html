@@ -2,9 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <!-- interactive-widget=resizes-content：虚拟键盘弹出时让布局视口随之收缩（而非仅
-         收缩可视视口再由浏览器滚动定位输入点）。这样高度单位与终端容器平滑跟随键盘，
-         不会出现整块界面被推走的跳动。Chrome 108+/Firefox 132+ 支持，其他浏览器忽略。 -->
+    <!-- interactive-widget=resizes-content：虚拟键盘弹出时让布局视口随可视视口收缩，
+         使 CSS 高度单位与终端容器在 Chrome/Firefox for Android 上平滑跟随键盘。
+         注意：Safari 至今【不支持】该指令（WebKit 已实现，尚未随版本发布），iOS 上布局视口
+         与 100dvh 都不变、只有可视视口收缩，因此壳层不能只依赖它：由
+         src/composables/useViewportHeight.ts 监听 visualViewport 写入 --vvh/--vvt，
+         .app-shell 据此跟随键盘（见 style.css）。 -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"

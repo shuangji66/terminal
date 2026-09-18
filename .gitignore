@@ -4,6 +4,7 @@ dist
 embed
 terminal
 *.log
+*.png
 
 # go caches (project-local, same as dsh)
 .gocache

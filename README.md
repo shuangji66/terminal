@@ -52,6 +52,18 @@
   按下后变色，**输入一次键盘输入后自动解除**。
 - **点击/长按调起系统文字工具** — 移动端点击或长按终端文本即调起**系统文字工具**
   （通过隐藏 textarea 获得原生文本菜单，同时桥接输入/粘贴到会话，菜单调起后仍可正常键入）。
+- **虚拟键盘适配（移动端）** — 键盘弹起时整个界面跟随收缩：底部辅助键条整体上抬到键盘之上，
+  终端区域自动变小并重排列数（下发 `resize` 给 PTY），键盘收起后原样恢复。实现上监听
+  `visualViewport` 把可视视口几何写入 CSS 变量驱动壳层高度（`--vvh`）与位移（`--vvt`），
+  因此 **iOS Safari 同样生效**——`interactive-widget=resizes-content` 只被
+  Chrome/Firefox for Android 支持，Safari 至今未实现，仅靠 `100dvh` 在 iOS 上不会跟随。
+  键盘弹起时底部安全区（home indicator）已被键盘覆盖，键条内边距同步归零，不留多余空隙。
+- **移动端单指拖动滚动（含 iOS）** — 在终端区域直接上下滑动即可翻阅回滚历史：拖动终端内容
+  滚动（超过 10px 判定为滚动，轻触/长按仍调起系统文字工具），也可拖动右侧滚动条（触屏下常驻
+  可见、热区加宽，见下）。xterm v6 的滚动改由 JS 驱动，`.xterm-viewport` 已无原生可滚动内容，
+  因此拖动由前端把位移换算成行数调用 `scrollLines()`；容器设 `touch-action: none` 并给滚动条
+  `touch-action: none`，避免手势被浏览器认领为整页平移（iOS 上就是「页面抖动/橡皮筋回弹」）。
+  翻阅历史时后台新输出不会把视图顶回底部（`stickToBottom`：仅跟随底部或用户主动输入时回底）。
 - **WebSocket + PTY** — `creack/pty` 交互式 bash，OSC 控制消息处理 resize 与心跳保活。
 - **仅 unix socket 访问** — 无 TCP 监听；baseurl 由后端运行时注入 `<base href>`，
   前端资源与 API/WS 统一基于 `document.baseURI` 解析。

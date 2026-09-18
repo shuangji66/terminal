@@ -51,9 +51,6 @@ let onPasteEvent: ((ev: ClipboardEvent) => void) | null = null
 let toastTimer: number | null = null
 let repeatTimer: number | null = null
 let pasteHelper: HTMLTextAreaElement | null = null
-let touchStartX = 0
-let touchStartY = 0
-let touchStartTime = 0
 
 // 会话不存在标记：收到 "session not found" 后丢弃旧 id，连接关闭时自动重建
 let recreateOnClose = false
@@ -193,8 +190,24 @@ const LIGHT_PALETTE = {
 }
 
 // ---------- 渲染辅助 ----------
+// 是否「跟随底部」：用户拖动看历史（viewportY < baseY）后置 false，回到最底才恢复 true。
+// 由 term.onScroll 维护，见 initTerminal。自动滚动只在跟随底部时发生，否则会把用户刚翻上去
+// 的历史立刻拽回底部（移动端拖动滚动会因此形同废设）。
+let stickToBottom = true
+
+// 自动滚动：仅在「跟随底部」时生效，用于后台输出/尺寸变化这类不应打断用户阅读的场景。
 function scrollToBottom() {
+  if (!term || !props.active || !stickToBottom) return
+  nextTick(() => {
+    if (stickToBottom) term?.scrollToBottom()
+  })
+}
+
+// 强制滚到底：用于用户自己发起的操作（键入/粘贴/执行指令/清屏/切换标签），
+// 此时意图明确就是要看最新内容。
+function pinToBottom() {
   if (!term || !props.active) return
+  stickToBottom = true
   nextTick(() => term?.scrollToBottom())
 }
 
@@ -372,7 +385,8 @@ function fitAndResize() {
     const rows = term.rows
     if (cols > 0 && rows > 0) {
       sendResize(cols, rows)
-      if (props.active) term.scrollToBottom()
+      // 重排不应打断用户翻看历史：仅在跟随底部时回到最底
+      scrollToBottom()
     }
   } catch (e) {
     console.warn('fitAndResize error:', e)
@@ -420,7 +434,7 @@ function debouncedFit() {
 function sendKey(data: string) {
   term?.focus()
   if (sock && sock.readyState === WebSocket.OPEN) sock.send(data)
-  scrollToBottom()
+  pinToBottom()
 }
 
 function toggleModifier(mod: 'ctrl' | 'alt' | 'shift') {
@@ -485,7 +499,7 @@ async function pasteClipboard() {
     if (text) {
       sock.send(text)
       term?.focus()
-      scrollToBottom()
+      pinToBottom()
     }
   } catch {
     openSystemTextTool()
@@ -494,7 +508,7 @@ async function pasteClipboard() {
 
 function clearTerminal() {
   term?.clear()
-  scrollToBottom()
+  pinToBottom()
   // 清屏同步清空后端临时历史文件：重连/刷新后不再回放已清除的内容
   if (props.tab.id) {
     api.clearSessionHistory(props.tab.id).catch((e) => console.warn('clear session history:', e))
@@ -546,7 +560,7 @@ function openSystemTextTool() {
       if (sock && sock.readyState === WebSocket.OPEN) sock.send('\x7f')
     }
     lastVal = v
-    scrollToBottom()
+    pinToBottom()
   }
   const onKeydown = (e: KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -565,7 +579,7 @@ function openSystemTextTool() {
     ev.preventDefault()
     if (text && sock && sock.readyState === WebSocket.OPEN) {
       sock.send(text)
-      scrollToBottom()
+      pinToBottom()
     }
   }
   const onBlur = () => {
@@ -599,24 +613,103 @@ function openSystemTextTool() {
   }, 30000)
 }
 
+// ---------- 移动端触摸手势：单指纵向拖动滚动 + 轻触/长按调起系统文字工具 ----------
+// 为什么自己实现滚动：xterm v6 起滚动改由 VS Code 的 SmoothScrollableElement 用 JS 驱动
+// （Viewport.ts），.xterm-viewport 的原生滚动已是空壳（实测 scrollHeight === clientHeight），
+// 浏览器没有任何可滚动内容可平移，单指拖动因此完全没反应。故由本组件把纵向位移换算成行数
+// 调 term.scrollLines()，并给容器设 touch-action: none 阻止页面被拖动（否则 iOS 会橡皮筋回弹）。
+//
+// 与「调起系统文字工具」的手势区分：位移超过 TAP_SLOP 即判定为滚动（此后本次触摸不再调起
+// 文字工具）；未超过则按原来的轻触/长按逻辑处理。
+const TAP_SLOP = 10 // px：超过即视为滚动而非点击
+
+let scrollAccum = 0 // 不足一行的残余像素（跨事件累计，避免慢速拖动丢行）
+let gestureScrolling = false // 本次触摸是否已判定为滚动
+let touchStartX = 0
+let touchStartY = 0
+let touchStartTime = 0
+let touchActive = false
+
+// 一个单元格（行）的像素高度。term.dimensions 不在公开 typings 里（proposed API），
+// 故用挂载层内 .xterm-screen 的实测高度 ÷ 行数求得；两者都取不到时按字号估算。
+function cellHeight(): number {
+  const screen = el.value?.querySelector('.xterm-screen') as HTMLElement | null
+  const rows = term?.rows ?? 0
+  if (screen && rows > 0) {
+    const h = screen.getBoundingClientRect().height / rows
+    if (h > 0) return h
+  }
+  return settings.fontSize * 1.2
+}
+
+// 触摸是否落在 xterm 自带的滚动条上：滚动条自身通过 pointer 事件拖动滑块（见 style.css 的
+// touch-action: none），必须交给它处理，不能再叠加本组件的 scrollLines，否则会双倍滚动。
+function isScrollbarTouch(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('.xterm-scrollable-element > .scrollbar')
+}
+
+// 拖动方向：手指下滑（dy > 0）表示看更早的内容，即向上滚动（scrollLines 负数）
+function scrollByPixels(dy: number) {
+  if (!term) return
+  const ch = cellHeight()
+  scrollAccum += dy
+  const lines = Math.trunc(scrollAccum / ch)
+  if (lines === 0) return
+  scrollAccum -= lines * ch
+  term.scrollLines(-lines)
+}
+
 function onTouchStart(e: TouchEvent) {
-  if (e.touches.length !== 1) return
+  // 滚动条上的触摸交给 xterm 自己处理（拖动滑块）
+  if (isScrollbarTouch(e.target)) {
+    touchActive = false
+    touchStartTime = 0
+    return
+  }
+  if (e.touches.length !== 1) {
+    // 多指（捏合等）不参与滚动，也不调起文字工具
+    touchActive = false
+    touchStartTime = 0
+    return
+  }
   const touch = e.touches[0]
   touchStartX = touch.clientX
   touchStartY = touch.clientY
   touchStartTime = Date.now()
+  touchActive = true
+  gestureScrolling = false
+  scrollAccum = 0
 }
 
 function onTouchMove(e: TouchEvent) {
-  // 滑动/滚动期间取消“调起文字工具”
+  if (!touchActive) return
   const touch = e.touches[0]
-  if (Math.abs(touch.clientX - touchStartX) > 12 || Math.abs(touch.clientY - touchStartY) > 12) {
-    touchStartTime = 0
+  if (!touch) return
+  const dy = touch.clientY - touchStartY
+  const dx = touch.clientX - touchStartX
+  if (!gestureScrolling) {
+    // 未越过阈值前不滚动：横向位移明显大于纵向时也不判为滚动（保留系统文字选择手感）
+    if (Math.abs(dy) < TAP_SLOP || Math.abs(dx) > Math.abs(dy)) return
+    gestureScrolling = true
+    touchStartTime = 0 // 已判定为滚动，本次触摸不再调起文字工具
+    scrollAccum = 0
+    touchStartY = touch.clientY // 以越过阈值处为滚动起点，避免起手跳一行
+    return
   }
+  const last = touch.clientY
+  scrollByPixels(last - touchStartY)
+  touchStartY = last
 }
 
 function onTouchEnd() {
-  if (touchStartTime === 0) return
+  const wasScroll = gestureScrolling
+  touchActive = false
+  gestureScrolling = false
+  scrollAccum = 0
+  if (wasScroll || touchStartTime === 0) {
+    touchStartTime = 0
+    return
+  }
   touchStartTime = 0
   // 点击（轻触）或长按终端文本均调起系统文字工具
   openSystemTextTool()
@@ -721,7 +814,7 @@ function initTerminal() {
     if (text) {
       ev.preventDefault()
       sock.send(text)
-      scrollToBottom()
+      pinToBottom()
     }
   }
   el.value.addEventListener('paste', onPasteEvent)
@@ -744,6 +837,14 @@ function initTerminal() {
       altPressed.value = false
       shiftPressed.value = false
     }
+  })
+
+  // 维护「跟随底部」标记：滚动位置不在最底（含用户拖动/滚轮/翻页）时停止自动跟随，
+  // 回到最底时恢复。这样后台输出与尺寸重排不会把用户翻上去的历史顶掉。
+  term.onScroll(() => {
+    if (!term) return
+    const buf = term.buffer.active
+    stickToBottom = buf.viewportY >= buf.baseY
   })
 
   // 桌面端：鼠标框选（或双击选词）后自动把选中文本复制进剪贴板，并 toast 提示。
@@ -779,7 +880,7 @@ function regControls() {
     send: (data: string) => {
       if (sock && sock.readyState === WebSocket.OPEN) {
         sock.send(data)
-        scrollToBottom()
+        pinToBottom()
         return true
       }
       return false
@@ -816,6 +917,8 @@ watch(
       nextTick(() => {
         requestAnimationFrame(() => fitAndResize())
         term?.focus()
+        // 切到本标签时用户意图是继续操作，回到最新内容
+        stickToBottom = true
         term?.scrollToBottom()
       })
     }

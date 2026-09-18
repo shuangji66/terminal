@@ -8,6 +8,7 @@ import QuickCmdEditDialog from '@/components/QuickCmdEditDialog.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import { useTheme } from '@/composables/useTheme'
+import { useViewportHeight } from '@/composables/useViewportHeight'
 import { t } from '@/i18n'
 import { useSessionsStore } from '@/stores/sessions'
 import { useQuickCmdsStore } from '@/stores/quickCmds'
@@ -17,6 +18,9 @@ import { useSettingsStore } from '@/stores/settings'
 import type { QuickCmd } from '@/serverapi'
 
 useTheme() // 初始化 / 跟随系统主题
+// 移动端虚拟键盘适配：把可视视口几何写入 CSS 变量，壳层与底部键条据此让位
+// （Safari 不支持 interactive-widget=resizes-content，只能自行跟随可视视口）。
+useViewportHeight()
 const store = useSessionsStore()
 const qc = useQuickCmdsStore()
 const toast = useToastStore()

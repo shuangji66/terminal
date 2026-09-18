@@ -77,11 +77,18 @@
   黑字）、字号（来自 settings store）动态应用；会话控制帧处理（`\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07`）；搜索悬浮框；鼠标选中自动复制（桌面端）；
   移动端点击/长按文本调起系统文字工具（`openSystemTextTool`，隐藏 textarea 唤起原生菜单
-  并桥接输入）；辅助功能键（`KeypadBar`）按键修饰符输入一次后自动解除；
-  向 `paneControls` 注册命令入口（paste/clear/reconnect/search/focus/send）。
+  并桥接输入）；**移动端单指纵向拖动滚动**（xterm v6 无原生滚动容器，自行换算行数调
+  `scrollLines`，与轻触手势按 `TAP_SLOP` 阈值区分）；辅助功能键（`KeypadBar`）按键修饰符
+  输入一次后自动解除；向 `paneControls` 注册命令入口（paste/clear/reconnect/search/focus/send）。
 - `KeypadBar.vue` — 移动端辅助键条（ESC/Tab/Ctrl/Alt/Shift/Ins/←↓→/符号）；
   长按连发；修饰键（Ctrl/Alt/Shift）变色指示按下态，输入一次后自动解除；
-  所有非长按键采用 `@click` + `@touchstart.prevent` 双保险确保移动端可靠触发。
+  所有非长按键采用 `@click` + `@touchstart.prevent` 双保险确保移动端可靠触发；
+  底部内边距用 `--kb-safe-bottom`（键盘弹起时为 0，见下条）。
+- `composables/useViewportHeight.ts` — **虚拟键盘适配（App 壳层调用一次）**：监听
+  `visualViewport` 的 `resize`/`scroll`，把可视视口几何写入 `<html>` 的 CSS 变量：
+  `--vvh`（可视视口高度 = `.app-shell` 高度）、`--vvt`（可视视口相对布局视口的位移 =
+  `.app-shell` 的 `top`）、`--kb-safe-bottom`（键盘弹起时 0，覆盖键条的安全区内边距）。
+  不用 `100dvh` 的原因见第 5 节「虚拟键盘适配」。
 - `stores/` — `sessions`（标签 + userSpec + 恢复/关闭）、`settings`（用户模式 + 字号，
   字号存 localStorage）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
   顶栏按钮通过激活 uid 解析，避免后台标签覆盖）。
@@ -158,6 +165,35 @@
   不要误判为构建失败。
 - **paneControls 按 uid 注册**：`pc.register(uid, c)` / `pc.get(activeUid)`——顶栏按钮
   若再使用单一共享对象会导致操作作用于后台标签（历史 bug）。
+- **虚拟键盘适配（iOS 底栏不跟随的根因）**：`index.html` 的
+  `interactive-widget=resizes-content` **只对 Chrome/Firefox for Android 生效**；
+  **Safari 至今不支持**（WebKit 已实现，尚未随版本发布），iOS 上键盘弹起只收缩
+  「可视视口」（`visualViewport`），布局视口与 `100dvh` 都不变。因此**不要把壳层高度
+  退回 `100dvh`**：`.app-shell` 由 `useViewportHeight()` 写入的 `--vvh` 驱动，
+  并用 `position: fixed; top: var(--vvt)` 钉在可视视口矩形上（键盘弹起时 iOS 会把可视
+  视口下移，靠 `top` 跟随；若改用 `margin/transform` 会让文档高于视口而产生多余滚动，
+  反过来干扰 `offsetTop`）。`--vvh/--vvt/--kb-safe-bottom` 三者是一组，缺一个就会
+  出现「底栏被键盘盖住 / 与键盘之间多一条安全区空隙 / 终端不收缩」。
+  纯 CSS 无法替代：`env(keyboard-inset-height)` 需要 VirtualKeyboard API（未启用），
+  `@supports (height: var(--vvh))` 恒为假（`@supports` 条件含 `var()` 按规范判不支持）。
+  改动后必须**真机或可视视口可收缩的环境**验证；CDP 的
+  `Emulation.setDeviceMetricsOverride/ setVisibleSize` 在部分环境**无法**改变
+  `visualViewport`，不能用来判定修复是否生效。
+- **移动端滚动必须自己实现，不要退回依赖 `.xterm-viewport`**：xterm **v6** 起滚动改由
+  VS Code 的 `SmoothScrollableElement` 用 JS 驱动（`Viewport.ts`），`.xterm-viewport` 的
+  原生滚动已是空壳（实测 `scrollHeight === clientHeight`，设 `scrollTop` 无效）。所以：
+  1) 单指拖动滚动由 `TerminalPane.vue` 把位移换算成行数调 `term.scrollLines()` 实现，
+     位移超 `TAP_SLOP`(10px) 判定为滚动、否则仍调起系统文字工具；
+  2) `.term-container` 与 xterm 滚动条都必须 `touch-action: none`，否则纵向拖动会被浏览器
+     认领为整页平移，iOS 上就是「页面抖动/橡皮筋回弹」；
+  3) 触屏下滚动条默认 `opacity:0 + visibility:hidden + pointer-events:none`（Auto 可见性靠
+     hover 触发，触屏永远等不到），需在 `@media (hover: none)` 里显式恢复**三者**——只恢复
+     `opacity/visibility` 会看得见却点不到（`pointer-events` 由 xterm 的 `.invisible` 类设置）；
+  4) 滚动位置由 `stickToBottom`（`term.onScroll` 维护）守护：后台输出/尺寸重排只在跟随底部时
+     才 `scrollToBottom()`，用户主动输入才 `pinToBottom()`，否则会把用户翻上去的历史顶掉。
+  5) 轻触调起系统文字工具在移动端**当前不生效**（隐藏 textarea 聚焦后被 xterm 的
+     `xterm-helper-textarea` 抢走焦点，随即 `blur` → `cleanup` 删除）；已在 HEAD 基线复核为
+     **既有问题**，非本次改动引入。
 
 ---
 

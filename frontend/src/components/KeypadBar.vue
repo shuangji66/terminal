@@ -6,6 +6,8 @@
 // 方向键支持长按连发；所有按键统一 emit('key') 交给终端面板发送。
 // 交互策略：@click 覆盖桌面/部分移动端；同时用 @touchstart.prevent 作为移动端
 //   保底（避免浏览器在 prevent.stop 容器中不合成 click 导致按键无效）。
+// 底部内边距：默认安全区 + 8px；键盘弹起时 --kb-safe-bottom 为 0（安全区已被键盘覆盖，
+//   见 composables/useViewportHeight.ts），否则键条与键盘之间会多出一条安全区的空隙。
 const props = defineProps<{
   ctrl: boolean
   alt: boolean
@@ -64,7 +66,7 @@ const modOnCls = '!bg-brand !text-white'
 <template>
   <div
     class="flex md:hidden shrink-0 flex-col gap-1 px-2 pt-1.5 bg-bg dark:bg-bg-dark border-t border-line dark:border-line-dark select-none"
-    style="touch-action: manipulation; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px)"
+    style="touch-action: manipulation; padding-bottom: calc(var(--kb-safe-bottom, env(safe-area-inset-bottom, 0px)) + 8px)"
     @touchstart.prevent.stop
   >
     <!-- 第一行：ESC | ↑ | Tab | Ctrl | Alt | Shift | Insert（↑ 为倒 T 方向键的顶端，Insert 最右） -->
