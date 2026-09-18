@@ -33,6 +33,7 @@ export const en: Record<string, string> = {
   no_selection: 'Nothing selected',
   select_hint: 'Select text to copy',
   not_connected: 'Terminal not connected',
+  paste_denied: 'Cannot read clipboard, use the keyboard paste instead',
 
   theme_label: 'Theme',
   theme_light: 'Light',

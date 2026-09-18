@@ -37,10 +37,18 @@ const el = ref<HTMLElement | null>(null)
 
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
+// iOS 第三方输入法键盘守卫的监听安装器（initTerminal 里生成，installImeFallback 里挂到 textarea）
+let imeGuard: {
+  attach(textarea: HTMLTextAreaElement): void
+  detach(textarea: HTMLTextAreaElement): void
+} | null = null
 let searchAddon: SearchAddon | null = null
 let sock: WebSocket | null = null
 let termOpened = false
 let disposed = false
+// 待补的聚焦意图：term.open() 之前 .xterm-helper-textarea 尚未创建，此时 term.focus()
+// 是空操作（xterm 内部 `if (this.textarea)` 直接返回），静默丢弃这次聚焦。
+let pendingFocus = false
 
 // 心跳间隔：防止连接被代理 / NAT 空闲超时断开
 const HEARTBEAT_INTERVAL_MS = 20000
@@ -50,7 +58,6 @@ let fitRetryTimer: number | null = null
 let onPasteEvent: ((ev: ClipboardEvent) => void) | null = null
 let toastTimer: number | null = null
 let repeatTimer: number | null = null
-let pasteHelper: HTMLTextAreaElement | null = null
 
 // 会话不存在标记：收到 "session not found" 后丢弃旧 id，连接关闭时自动重建
 let recreateOnClose = false
@@ -97,7 +104,7 @@ function closeSearch() {
   searchTerm.value = ''
   resetSearchResults()
   searchAddon?.clearDecorations()
-  term?.focus()
+  focusTerm()
 }
 
 function onSearchTermChange(val: string) {
@@ -432,7 +439,7 @@ function debouncedFit() {
 
 // ---------- 辅助键（KeypadBar 事件桥接） ----------
 function sendKey(data: string) {
-  term?.focus()
+  focusTerm()
   if (sock && sock.readyState === WebSocket.OPEN) sock.send(data)
   pinToBottom()
 }
@@ -441,7 +448,7 @@ function toggleModifier(mod: 'ctrl' | 'alt' | 'shift') {
   if (mod === 'ctrl') ctrlPressed.value = !ctrlPressed.value
   else if (mod === 'alt') altPressed.value = !altPressed.value
   else if (mod === 'shift') shiftPressed.value = !shiftPressed.value
-  term?.focus()
+  focusTerm()
 }
 
 function startRepeat(key: string) {
@@ -462,6 +469,10 @@ function stopRepeat() {
 // 复制 / 粘贴 / 清屏
 // 剪贴板写入：优先异步 Clipboard API；非安全上下文（http 反代）时用 execCommand 兜底
 function legacyCopy(text: string) {
+  // 记下当前焦点：下面的临时 textarea 必须聚焦才能 select，而它会把焦点从终端
+  // 的 .xterm-helper-textarea 抢走——移动端上「焦点离开输入框」即收起/拉不起软键盘，
+  // 表现为「选中后键盘消失」。因此用完必须把焦点还给原来的元素。
+  const prev = document.activeElement as HTMLElement | null
   const ta = document.createElement('textarea')
   ta.value = text
   ta.style.position = 'fixed'
@@ -477,6 +488,9 @@ function legacyCopy(text: string) {
     /* 忽略 */
   }
   document.body.removeChild(ta)
+  if (prev && prev !== ta && document.contains(prev) && typeof prev.focus === 'function') {
+    prev.focus({ preventScroll: true })
+  }
 }
 
 function copyText(text: string) {
@@ -487,7 +501,7 @@ function copyText(text: string) {
   }
 }
 
-// 复制按钮已移除：桌面由选中自动复制取代，移动端由系统文字工具取代。
+// 复制按钮已移除：桌面由鼠标框选自动复制、移动端由长按选词自动复制取代。
 
 async function pasteClipboard() {
   if (!sock || sock.readyState !== WebSocket.OPEN) {
@@ -498,11 +512,12 @@ async function pasteClipboard() {
     const text = await navigator.clipboard.readText()
     if (text) {
       sock.send(text)
-      term?.focus()
+      focusTerm()
       pinToBottom()
     }
   } catch {
-    openSystemTextTool()
+    // 剪贴板不可读（非安全上下文 / 未授权）：提示用户改用系统键盘自带的粘贴
+    showToast(t('paste_denied'))
   }
 }
 
@@ -527,108 +542,53 @@ function showToast(msg: string) {
   }, 1400)
 }
 
-// 移动端：点击/长按终端文本调起系统文字工具（原生文本菜单）。
-// 通过隐藏 textarea 获得系统焦点与原生菜单：有选中内容则载入并全选（可用系统
-// 选择/复制工具），并桥接输入（键入/退格/回车/粘贴均转发到会话），菜单调起后仍可正常输入。
-function openSystemTextTool() {
-  if (pasteHelper) return // 已处于输入/文本菜单状态
-  if (!sock || sock.readyState !== WebSocket.OPEN || !term) {
-    term?.focus()
-    return
-  }
-  const sel = term.getSelection() || ''
-  let lastVal = ''
-  const cleanup = () => {
-    if (pasteHelper) {
-      pasteHelper.removeEventListener('input', onInput)
-      pasteHelper.removeEventListener('keydown', onKeydown)
-      pasteHelper.removeEventListener('paste', onPaste)
-      pasteHelper.removeEventListener('blur', onBlur)
-      document.body.removeChild(pasteHelper)
-      pasteHelper = null
-    }
-  }
-  const onInput = () => {
-    const ta = pasteHelper
-    if (!ta) return
-    const v = ta.value
-    if (v.length > lastVal.length) {
-      const added = v.slice(lastVal.length)
-      if (sock && sock.readyState === WebSocket.OPEN) sock.send(added)
-    } else if (v.length < lastVal.length) {
-      // 退格删除
-      if (sock && sock.readyState === WebSocket.OPEN) sock.send('\x7f')
-    }
-    lastVal = v
-    pinToBottom()
-  }
-  const onKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      if (sock && sock.readyState === WebSocket.OPEN) sock.send('\r')
-    } else if (e.key === 'Tab') {
-      e.preventDefault()
-      if (sock && sock.readyState === WebSocket.OPEN) sock.send('\t')
-    } else if (e.key === 'Escape') {
-      cleanup()
-      term?.focus()
-    }
-  }
-  const onPaste = (ev: ClipboardEvent) => {
-    const text = ev.clipboardData?.getData('text/plain')
-    ev.preventDefault()
-    if (text && sock && sock.readyState === WebSocket.OPEN) {
-      sock.send(text)
-      pinToBottom()
-    }
-  }
-  const onBlur = () => {
-    setTimeout(cleanup, 200)
-  }
-
-  const ta = document.createElement('textarea')
-  ta.value = sel
-  ta.style.position = 'fixed'
-  ta.style.left = '0'
-  ta.style.top = '0'
-  ta.style.width = '2px'
-  ta.style.height = '2px'
-  ta.style.opacity = '0'
-  ta.style.pointerEvents = 'none'
-  ta.setAttribute('autocorrect', 'off')
-  ta.setAttribute('autocapitalize', 'off')
-  ta.setAttribute('spellcheck', 'false')
-  document.body.appendChild(ta)
-  pasteHelper = ta
-  lastVal = ta.value
-  ta.addEventListener('input', onInput)
-  ta.addEventListener('keydown', onKeydown)
-  ta.addEventListener('paste', onPaste)
-  ta.addEventListener('blur', onBlur)
-  ta.focus()
-  if (sel) ta.setSelectionRange(0, sel.length)
-  // 兜底：长时间无交互则清理，避免残留
-  setTimeout(() => {
-    if (pasteHelper) cleanup()
-  }, 30000)
-}
-
-// ---------- 移动端触摸手势：单指纵向拖动滚动 + 轻触/长按调起系统文字工具 ----------
-// 为什么自己实现滚动：xterm v6 起滚动改由 VS Code 的 SmoothScrollableElement 用 JS 驱动
-// （Viewport.ts），.xterm-viewport 的原生滚动已是空壳（实测 scrollHeight === clientHeight），
-// 浏览器没有任何可滚动内容可平移，单指拖动因此完全没反应。故由本组件把纵向位移换算成行数
-// 调 term.scrollLines()，并给容器设 touch-action: none 阻止页面被拖动（否则 iOS 会橡皮筋回弹）。
+// ---------- 移动端触摸：自研单指滚动 + 滚动条拖动 + 长按选词复制 + 轻触聚焦 ----------
+// 为什么全部自研：xterm 6.0.0（stable）的滚动由 VS Code 的 SmoothScrollableElement 用 JS
+// 驱动（Viewport.ts），.xterm-viewport 的原生滚动是空壳（实测 scrollHeight === clientHeight，
+// 设 scrollTop 无效），而 browser 层**没有任何触摸代码**、滚动条只监听 pointer 事件——
+// 触屏上单指拖动无人响应、滚动条滑块抓不到。曾升级 6.1.0-beta 试图用其自带 Gesture 解决，
+// 但 beta 的手势层 preventDefault 掉了浏览器的合成鼠标事件，安卓/iOS 上轻触拉不起键盘
+// （已实测无效并回退），故滚动、滚动条拖动全部在本组件实现，不再依赖任何 xterm 触摸能力。
 //
-// 与「调起系统文字工具」的手势区分：位移超过 TAP_SLOP 即判定为滚动（此后本次触摸不再调起
-// 文字工具）；未超过则按原来的轻触/长按逻辑处理。
-const TAP_SLOP = 10 // px：超过即视为滚动而非点击
+// 单指拖动 = 把纵向位移换算成行数调 term.scrollLines()（沿用回退前的自研实现）；
+// 滚动条 = 触屏上让滑块常驻可见、加宽热区，拖动由本组件按 pointer 事件驱动
+// term.scrollLines()（xterm 的 GlobalPointerMoveMonitor 在触屏上收不到跨元素 pointermove，
+// 必须自接管）；长按选词仍自研（xterm 浏览器层只监听鼠标事件，iOS 不合成）。
+//
+// 本组件的触摸职责四件：
+//   - 按住不动超过 LONG_PRESS_MS → 长按选词（位移超过 TAP_SLOP 即取消，改为滚动）
+//   - 单指纵向拖动 → 换算行数滚动
+//   - 滚动条滑块拖动 → 按像素换算行数滚动（热区加宽，见 style.css）
+//   - 其余 → 轻触：聚焦终端（Android 上这是拉起软键盘的**唯一**路径，见下）
+//
+// ⚠️ 轻触聚焦为何必须由本组件做：iOS Safari 本来就不把触摸合成鼠标事件（对
+// user-select:none 的 canvas 完全不合成），xterm 聚焦 textarea 的 mousedown 路径在触屏上
+// 不生效；Android 上虽然会合成，但一旦本组件在 touchstart/touchmove 里 preventDefault
+// （拖动滚动必需），合成链就被切断，同样只剩 onTouchEnd 的 term.focus()。
+// 阈值必须与 xterm 的 tap 判定（位移 <30px 且 <700ms）对齐：若用 10px，手指漂移 10~30px
+// 时本组件判「拖动」不聚焦、xterm 又判 tap 不滚动 → 两端都不聚焦，键盘拉不起来
+// （即「恢复会话后点终端不出键盘」的根因之一）。
+const TAP_SLOP = 30 // px：位移超过即视为拖动（进入滚动），取消长按；≤30px 视为轻触
+const LONG_PRESS_MS = 500 // ms：按住不动多久判定为长按
 
-let scrollAccum = 0 // 不足一行的残余像素（跨事件累计，避免慢速拖动丢行）
-let gestureScrolling = false // 本次触摸是否已判定为滚动
 let touchStartX = 0
 let touchStartY = 0
-let touchStartTime = 0
 let touchActive = false
+let touchMoved = false // 本次触摸已判定为拖动（本组件接管滚动）
+let scrollAccum = 0 // 不足一行的残余像素（跨 touchmove 累计，避免慢速拖动丢行）
+let longPressTimer: number | null = null // 长按计时器
+let longPressFired = false // 本次触摸是否已触发长按选词
+// 最近发往 PTY 的数据（含 xterm 自身发送与兜底补发），仅用于 iOS 第三方输入法兜底判重
+// （见 installImeFallback）。环形截断，避免无限增长。
+const recentSent: string[] = []
+function recordSent(data: string) {
+  recentSent.push(data)
+  if (recentSent.length > 64) recentSent.shift()
+}
+// 选区自动复制的去重/节流标记。放在组件作用域是为了让长按选词能重置去重，
+// 否则「对同一个单词长按第二次」会被当成重复文本而既不复制也不提示。
+let lastAutoCopied = ''
+let lastAutoCopyToastAt = 0
 
 // 一个单元格（行）的像素高度。term.dimensions 不在公开 typings 里（proposed API），
 // 故用挂载层内 .xterm-screen 的实测高度 ÷ 行数求得；两者都取不到时按字号估算。
@@ -642,43 +602,152 @@ function cellHeight(): number {
   return settings.fontSize * 1.2
 }
 
-// 触摸是否落在 xterm 自带的滚动条上：滚动条自身通过 pointer 事件拖动滑块（见 style.css 的
-// touch-action: none），必须交给它处理，不能再叠加本组件的 scrollLines，否则会双倍滚动。
-function isScrollbarTouch(target: EventTarget | null): boolean {
-  return target instanceof Element && !!target.closest('.xterm-scrollable-element > .scrollbar')
-}
-
-// 拖动方向：手指下滑（dy > 0）表示看更早的内容，即向上滚动（scrollLines 负数）
-function scrollByPixels(dy: number) {
-  if (!term) return
+// 把纵向位移（手指下滑 dy>0 = 看更早内容）换算成行数并滚动。
+// 返回 true 表示本次确实滚动了内容（可用于区分「滚动」与「不可滚动的轻触」）。
+function scrollByPixels(dy: number): boolean {
+  if (!term) return false
   const ch = cellHeight()
   scrollAccum += dy
   const lines = Math.trunc(scrollAccum / ch)
-  if (lines === 0) return
+  if (lines === 0) return false
   scrollAccum -= lines * ch
   term.scrollLines(-lines)
+  return true
+}
+
+// 触摸是否落在 xterm 的滚动条上：滚动条拖动由本组件按 pointer 事件接管（见下），
+// 不参与长按选词与单指滚动。
+// ⚠️ 6.0.0 的 DOM：.xterm-scrollable-element > .visible/.invisible.scrollbar.vertical > .slider
+// （horizontal 的横条正常不渲染，但限定 .vertical 更稳）
+function isScrollbarTouch(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    !!target.closest('.xterm-scrollable-element > .scrollbar.vertical')
+  )
+}
+
+// ---------- 滚动条拖动 ----------
+// 滑块拖动**不需要自研**：xterm 6.0.0 在 .scrollbar 节点上监听 pointerdown（_domNodePointerDown
+// → _sliderPointerDown → GlobalPointerMoveMonitor），内部已做 setPointerCapture + window 级
+// pointermove（含 preventDefault），触摸/鼠标统一可用——真实触摸拖动实测正常。
+// 本组件要做的只有两件 CSS 事（见 style.css）：① (hover: none) 下让滑块常驻可见并恢复
+// pointer-events（Auto 可见性靠 hover，触屏永远等不到，否则滑块抓不到）；② touch-action:none
+// 防止拖滑块被浏览器认领成页面平移。触摸到滚动条时本组件不启动选词/滚动/聚焦即可。
+
+// 触摸点 → 缓冲区坐标（列、绝对行号）。行号与 xterm 的 SelectionService 保持一致：
+// 视口内行 + viewportY（其内部是 ydisp，等价）。取不到返回 null。
+function pointToCell(clientX: number, clientY: number): { col: number; row: number } | null {
+  const screen = el.value?.querySelector('.xterm-screen') as HTMLElement | null
+  if (!screen || !term || term.cols <= 0 || term.rows <= 0) return null
+  const rect = screen.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const cellW = rect.width / term.cols
+  const cellH = rect.height / term.rows
+  const col = Math.floor((clientX - rect.left) / cellW)
+  const rowInViewport = Math.floor((clientY - rect.top) / cellH)
+  if (col < 0 || col >= term.cols || rowInViewport < 0 || rowInViewport >= term.rows) return null
+  return { col, row: term.buffer.active.viewportY + rowInViewport }
+}
+
+// 长按选词：选中该单元格所在的一个单词并返回文本；空白处返回空串。
+// 单词边界按 xterm 的 wordSeparator（默认 ' ()[]{}\',"`'）判定，与 xterm 自身双击选词规则一致；
+// 为覆盖中文/路径等无空格内容，额外把制表符也视为分隔符。
+type WordSelection = { word: string; col: number; row: number; length: number }
+
+// xterm 的默认 wordSeparator（OptionsService 的默认值），仅作为读取不到选项时的兜底
+const DEFAULT_WORD_SEPARATOR = ' ()[]{}\',"`'
+
+function selectWordAt(clientX: number, clientY: number): WordSelection | null {
+  if (!term) return null
+  const cell = pointToCell(clientX, clientY)
+  if (!cell) return null
+  const line = term.buffer.active.getLine(cell.row)
+  if (!line) return null
+  const text = line.translateToString(true) // 去掉右侧空白
+  if (!text) return null
+  const sep = term.options.wordSeparator ?? DEFAULT_WORD_SEPARATOR
+  const isSep = (ch: string) => ch === '\t' || sep.includes(ch)
+
+  // 定位落点所在单词的起止。两种情形：
+  //  - 落点本身是单词字符 → 先向左回退到词首（否则从词中间起算会截断，如 world 的第 3 字符起 → "rld"）
+  //  - 落点是分隔符（空格等）→ 向右吸附到下一个词首，与 xterm 双击选词的取向一致
+  let idx = Math.min(cell.col, text.length - 1)
+  if (idx < 0) return null
+  if (isSep(text[idx])) {
+    while (idx < text.length && isSep(text[idx])) idx++
+    if (idx >= text.length) {
+      // 落点右侧全是空白（点行尾空白）：向左回退到最近一个单词
+      idx = Math.min(cell.col, text.length - 1)
+      while (idx >= 0 && isSep(text[idx])) idx--
+      if (idx < 0) return null
+    }
+  }
+  let start = idx
+  while (start > 0 && !isSep(text[start - 1])) start--
+  let end = idx
+  while (end < text.length && !isSep(text[end])) end++
+  if (end <= start) return null
+  // xterm 的 select(column, row, length)：column/row 为缓冲区绝对坐标，length 为字符数
+  return { word: text.slice(start, end), col: start, row: cell.row, length: end - start }
+}
+
+// 长按选词 + 复制：先选中并自动复制（不依赖任何浏览器手势授权，最可靠），
+// 再尝试调起系统原生菜单（可选增强，失败不影响复制结果）。
+function handleLongPress(clientX: number, clientY: number) {
+  const hit = selectWordAt(clientX, clientY)
+  // 无论落点有没有单词，都必须把焦点交回终端：长按与轻触一样是「用户要点终端」的
+  // 意图，键盘必须能拉起。曾经只在「落点无词」时 focus()，于是**恢复的标签**（满屏
+  // 历史文字，落点几乎必中单词）长按后只选中不聚焦 → 焦点停在 BODY，键盘拉不起来；
+  // 新建标签是空白屏，落点无词走 focus() 分支，所以看起来「只有恢复的标签不行」。
+  focusTerm()
+  if (!hit) {
+    // 落点无单词：清掉可能存在的旧选区即可
+    term?.clearSelection()
+    return
+  }
+  // 重置去重标记：下面的 select() 会同步触发 onSelectionChange（见 initTerminal），
+  // 由那里统一负责「复制到剪贴板 + toast」，避免两处重复复制。
+  lastAutoCopied = ''
+  lastAutoCopyToastAt = 0
+  term?.select(hit.col, hit.row, hit.length)
+  // 只做「选中 + 自动复制」：不调起系统文本选择器/原生菜单（已按需求移除）。
+  // 复制由 onSelectionChange 统一完成（见 initTerminal）。
+}
+
+function cancelLongPress() {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+  }
 }
 
 function onTouchStart(e: TouchEvent) {
-  // 滚动条上的触摸交给 xterm 自己处理（拖动滑块）
+  cancelLongPress()
+  longPressFired = false
+  touchMoved = false
+  scrollAccum = 0
+  // 滚动条上的触摸交给滚动条拖动（本组件的 pointer 接管），不参与选词/滚动/轻触
   if (isScrollbarTouch(e.target)) {
     touchActive = false
-    touchStartTime = 0
     return
   }
   if (e.touches.length !== 1) {
-    // 多指（捏合等）不参与滚动，也不调起文字工具
+    // 多指（捏合等）不参与选词与滚动
     touchActive = false
-    touchStartTime = 0
     return
   }
   const touch = e.touches[0]
   touchStartX = touch.clientX
   touchStartY = touch.clientY
-  touchStartTime = Date.now()
   touchActive = true
-  gestureScrolling = false
-  scrollAccum = 0
+  // 长按选词：按住不动到时长后触发（位移超阈值会在 onTouchMove 里取消）
+  const { clientX, clientY } = touch
+  longPressTimer = window.setTimeout(() => {
+    longPressTimer = null
+    if (!touchActive || touchMoved) return
+    longPressFired = true
+    handleLongPress(clientX, clientY)
+  }, LONG_PRESS_MS)
 }
 
 function onTouchMove(e: TouchEvent) {
@@ -687,32 +756,104 @@ function onTouchMove(e: TouchEvent) {
   if (!touch) return
   const dy = touch.clientY - touchStartY
   const dx = touch.clientX - touchStartX
-  if (!gestureScrolling) {
-    // 未越过阈值前不滚动：横向位移明显大于纵向时也不判为滚动（保留系统文字选择手感）
-    if (Math.abs(dy) < TAP_SLOP || Math.abs(dx) > Math.abs(dy)) return
-    gestureScrolling = true
-    touchStartTime = 0 // 已判定为滚动，本次触摸不再调起文字工具
+  if (!touchMoved) {
+    // 未越过阈值前不滚动：横向位移明显大于纵向时不判为拖动（保留系统文字选择手感）
+    if (Math.abs(dy) < TAP_SLOP || Math.abs(dy) < Math.abs(dx)) return
+    touchMoved = true
+    cancelLongPress() // 已判定为拖动，本次触摸不再长按选词
     scrollAccum = 0
     touchStartY = touch.clientY // 以越过阈值处为滚动起点，避免起手跳一行
     return
   }
-  const last = touch.clientY
-  scrollByPixels(last - touchStartY)
-  touchStartY = last
+  // 自研滚动：纵向位移换算成行数（手指下滑 = 看更早内容）。preventDefault 阻止
+  // 浏览器把本次拖动认领为页面平移（.term-container 已声明 touch-action: none 兜底）。
+  if (e.cancelable) e.preventDefault()
+  scrollByPixels(touch.clientY - touchStartY)
+  touchStartY = touch.clientY
 }
 
 function onTouchEnd() {
-  const wasScroll = gestureScrolling
+  const wasLongPress = longPressFired
+  const wasMoved = touchMoved
+  cancelLongPress()
   touchActive = false
-  gestureScrolling = false
-  scrollAccum = 0
-  if (wasScroll || touchStartTime === 0) {
-    touchStartTime = 0
+  touchMoved = false
+  longPressFired = false
+  if (wasLongPress || wasMoved) return
+  // 轻触：聚焦终端。这是移动端拉起软键盘的可靠路径（iOS 不合成鼠标事件，Android 上
+  // 本组件在 touchmove 里 preventDefault 会切断合成链，都只剩这里）。
+  // 文字选择/复制由长按触发——见 handleLongPress。
+  focusTerm()
+}
+
+// 聚焦终端。term.open() 之前 textarea 还不存在，此时 focus() 会被 xterm 静默丢弃
+// （内部 `if (this.textarea)`），于是「首次触摸无效、再点一次才行」——恢复会话时
+// open() 要等 document.fonts.ready（最坏 800ms 兜底），这个窗口相当长。
+// 因此把聚焦意图记下来，open() 完成后补发一次。
+function focusTerm() {
+  if (termOpened) {
+    term?.focus()
     return
   }
-  touchStartTime = 0
-  // 点击（轻触）或长按终端文本均调起系统文字工具
-  openSystemTextTool()
+  pendingFocus = true
+}
+
+// ---------- iOS 第三方输入法兜底 ----------
+// 现象（仅 iOS 第三方键盘，原生键盘正常）：中文输入一会儿能用一会儿失效；英文偶发丢字符。
+//
+// 在 HEAD 基线上穷举真实事件形态（CDP 派发）后的结论：
+//   - `Input.insertText`（第三方键盘英文/数字常见形态）→ xterm 正常发出，**不需要干预**
+//   - `keyDown/keyUp` → 正常发出，**不需要干预**
+//   - IME 组合提交（中文）→ **完全丢失**（PTY 收不到任何内容），这才是真正的问题
+// 实测事件序列：
+//   compositionstart → compositionupdate:ni → input:ni:insertCompositionText
+//   → compositionupdate:你 → input:你:insertCompositionText
+//   → compositionupdate("") → input:deleteContentBackward → compositionend
+// 即第三方键盘提交候选字后**立即清空** textarea，而 xterm 的
+// CompositionHelper._finalizeComposition 是「compositionend 后用 setTimeout(0) 再读
+// textarea.value.substring(start)」——此时已读到空串，候选字永远发不出去。
+// 且 compositionend.data 在 iOS 上常为空串，只能靠 compositionupdate 的候选文本。
+//
+// 因此兜底**只覆盖 composition 路径**，绝不介入 insertText/keydown —— 那些路径 xterm 本来
+// 就正常，介入只会造成重复发送（这一点已在实现中踩过：范围放宽后英文变成双份）。
+function installImeFallback() {
+  const textarea = el.value?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+  if (!textarea) return
+
+  // 补发窗口：必须晚于 xterm 的 composition 发送时机（其内部为 setTimeout(0)）。
+  // 50ms 足以让它落地，又远短于人眼可感的延迟。
+  const FLUSH_DELAY_MS = 50
+
+  let candidate = '' // 最近一次 compositionupdate 的候选文本（提交后唯一可靠的来源）
+
+  const onStart = () => {
+    candidate = ''
+  }
+  const onUpdate = (e: CompositionEvent) => {
+    if (e.data) candidate = e.data
+  }
+  const onEnd = () => {
+    const text = candidate
+    candidate = ''
+    if (!text) return
+    // 判据：xterm 在这段时间内是否已发出包含该文本的数据（它正常时会自行发出）。
+    // 用内容比对而非计数，避免相邻输入互相干扰。
+    const mark = recentSent.length
+    setTimeout(() => {
+      if (recentSent.slice(mark).some((d) => d.indexOf(text) >= 0)) return // xterm 已发出
+      if (!sock || sock.readyState !== WebSocket.OPEN) return
+      sock.send(text)
+      recordSent(text)
+    }, FLUSH_DELAY_MS)
+  }
+
+  textarea.addEventListener('compositionstart', onStart, true)
+  textarea.addEventListener('compositionupdate', onUpdate, true)
+  textarea.addEventListener('compositionend', onEnd, true)
+
+  // 键盘守卫（issue #4486 workaround，见 initTerminal）也挂在同一个 textarea 上，
+  // 二者合用一次「open() 之后」的安装时机。
+  imeGuard?.attach(textarea)
 }
 
 // ---------- 初始化 ----------
@@ -728,6 +869,43 @@ function initTerminal() {
     letterSpacing: 0,
     allowProposedApi: true
   })
+
+  // ---------- iOS 第三方输入法的键盘守卫（issue #4486 的 workaround 路线） ----------
+  // 现象：中文 IME 输入「、」「。」等标点时，第三方键盘会把该按键映射成替代码（如 `\`）
+  // 发一个非 229 的 keydown。xterm 的 CompositionHelper 看到非 229 的 keydown 会先
+  // _finalizeComposition(false) 结束组合，再由 _keyDown 把**原始键码**当普通键发出 ——
+  // 于是 PTY 收到 `\` 而不是「、」，且组合态被破坏。原生键盘无此问题。
+  // 解法（同 microsoft/vscode#320525、code-by-wire 988a78c）：composition 期间让 xterm
+  // 忽略一切键盘事件。自定义 handler 在 _keyDown/_keyUp/_keyPress 里**先于**其他处理被调用，
+  // 返回 false 即全部拦截；组合文本仍会经 compositionend 正常提交，不受影响。
+  // ① 自维护 composing 标志：iOS 第三方键盘的 KeyboardEvent.isComposing 并不可靠，
+  //    以 compositionstart/end 为准更稳；② 同时读 e.isComposing 兜底。
+  // 该守卫只影响「组合期间的物理键」，输入结束后立即放行，不影响英文/数字直输路径。
+  let imeComposing = false
+  const startGuard = () => {
+    imeComposing = true
+  }
+  const endGuard = () => {
+    // compositionend 后浏览器可能还有一帧同组合的事件，延后一拍再放行
+    window.setTimeout(() => {
+      imeComposing = false
+    }, 0)
+  }
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== 'keydown' && ev.type !== 'keyup' && ev.type !== 'keypress') return true
+    return !(imeComposing || ev.isComposing)
+  })
+  // 标志的维护挂在 textarea 的组合事件上，须在 term.open() 之后（见 installImeFallback）。
+  imeGuard = {
+    attach(textarea) {
+      textarea.addEventListener('compositionstart', startGuard, true)
+      textarea.addEventListener('compositionend', endGuard, true)
+    },
+    detach(textarea) {
+      textarea.removeEventListener('compositionstart', startGuard, true)
+      textarea.removeEventListener('compositionend', endGuard, true)
+    }
+  }
 
   // 各种 addon：各自独立 try/catch，避免单个失败拖垮终端
   try {
@@ -776,29 +954,31 @@ function initTerminal() {
     console.warn('image addon:', e)
   }
 
-  // 等待等宽字体加载后再 open + fit，保证首测单元格宽度准确
-  const openAndFit = () => {
-    try {
-      term?.open(el.value as HTMLElement)
-      termOpened = true
-    } catch {
-      /* 已 open 则忽略 */
-    }
-    nextTick(() => {
-      requestAnimationFrame(() => fitAndResize())
-    })
+  // 立即 open()，不要等 document.fonts.ready：
+  //   1) 终端 fontFamily 是系统等宽字体栈（ui-monospace/Consolas/PingFang…），不含 webfont，
+  //      字符宽度测量不受 document.fonts.ready 影响——这个等待当初就不必要；
+  //   2) 更关键的是：open() 之前 .xterm-helper-textarea 不存在，`term.focus()` 会被 xterm
+  //      静默丢弃（内部 `if (this.textarea)` 直接返回），而用户「恢复会话后立刻点终端」
+  //      几乎必然落在这个窗口（fonts.ready 最坏等 800ms 兜底）→ 表现为「首次点终端没反应，
+  //      再点一次才行」。iOS 上补发无效（fonts.ready 回调不在用户手势内，无法弹键盘），
+  //      所以根治之道是让 open() 先于任何可能的轻触完成。
+  // fit 则照旧延到 rAF/尺寸稳定后执行（见 debouncedFit），测量与重排行为不变。
+  try {
+    term.open(el.value as HTMLElement)
+    termOpened = true
+  } catch (e) {
+    console.warn('term.open:', e)
   }
-  if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
-    const fallback = window.setTimeout(() => {
-      if (!termOpened) openAndFit()
-    }, 800)
-    document.fonts.ready.then(() => {
-      window.clearTimeout(fallback)
-      if (!termOpened) openAndFit()
-    })
-  } else {
-    openAndFit()
+  // 必须在 term.open() 之后：.xterm-helper-textarea 由 open() 创建
+  installImeFallback()
+  // open() 之前若有轻触把聚焦意图挂起（理论上一帧内才可能），此刻立即补发
+  if (pendingFocus) {
+    pendingFocus = false
+    term.focus()
   }
+  nextTick(() => {
+    requestAnimationFrame(() => fitAndResize())
+  })
 
   if (window.ResizeObserver) {
     resizeObserver = new ResizeObserver(debouncedFit)
@@ -831,6 +1011,7 @@ function initTerminal() {
       toSend = '\x1b' + data
     }
     sock.send(toSend)
+    recordSent(toSend) // 供 iOS 第三方输入法兜底判断「xterm 是否已自行发出」
     // 修饰键输入一次后自动解除：点击修饰键 → 键入任意按键 → 修饰键复位
     if (hadModifier) {
       ctrlPressed.value = false
@@ -847,10 +1028,26 @@ function initTerminal() {
     stickToBottom = buf.viewportY >= buf.baseY
   })
 
-  // 桌面端：鼠标框选（或双击选词）后自动把选中文本复制进剪贴板，并 toast 提示。
+  // iOS 第三方输入法（搜狗/百度/微信键盘等）组合输入修复。
+  //
+  // 现象：中文只能输入一次、之后再也输入不进去；英文要敲好几次才出一个字符（原生输入法正常）。
+  //
+  // 实测事件序列（CDP Input.imeSetComposition 复现真实 IME）：
+  //   compositionstart → compositionupdate:ni → input:ni:insertCompositionText
+  //   → compositionupdate:你 → input:你:insertCompositionText
+  //   → compositionupdate("") → input:deleteContentBackward → compositionend
+  // 即：**提交候选字后输入法立刻把 textarea 内容删掉**，且 compositionend.data 为空串。
+  // 而 xterm 的 CompositionHelper._finalizeComposition 是「compositionend 后用
+  // setTimeout(0) 再读 textarea.value.substring(start)」——那时内容已被删除，读到空串，
+  // 于是候选字永远不会发往 PTY（第二轮起更是连组合起点都被污染）。
+  //
+  // 修法：在 compositionupdate 阶段记下候选文本（那是唯一可靠的来源），
+  // compositionend 时若发现 xterm 没有把它发出去，就补发一次。
+  // 只补发「未发出」的内容，因此对原生输入法（xterm 正常发送）不会造成重复。
+  // 安装点见 openAndFit（必须等 term.open() 建出 .xterm-helper-textarea）。
+
+  // 桌面端鼠标框选 / 移动端长按选词后，自动把选中文本复制进剪贴板并 toast 提示。
   // 连续选择变化时按文本去重 + 1.2s 节流，避免刷屏。
-  let lastAutoCopied = ''
-  let lastAutoCopyToastAt = 0
   term.onSelectionChange(() => {
     const sel = term?.getSelection()
     if (!sel || !sel.trim() || sel === lastAutoCopied) return
@@ -876,7 +1073,7 @@ function regControls() {
     clear: clearTerminal,
     reconnect,
     search: toggleSearch,
-    focus: () => term?.focus(),
+    focus: focusTerm,
     send: (data: string) => {
       if (sock && sock.readyState === WebSocket.OPEN) {
         sock.send(data)
@@ -916,7 +1113,7 @@ watch(
     if (v) {
       nextTick(() => {
         requestAnimationFrame(() => fitAndResize())
-        term?.focus()
+        focusTerm()
         // 切到本标签时用户意图是继续操作，回到最新内容
         stickToBottom = true
         term?.scrollToBottom()
@@ -935,16 +1132,16 @@ onBeforeUnmount(() => {
   disposed = true
   pc.unregister(props.tab.uid)
   stopHeartbeat()
+  cancelLongPress()
+  // 键盘守卫的 composition 监听挂在 textarea 上，textarea 随 term.dispose() 一并销毁，
+  // 无需手动解绑；这里仅清空引用，防止 dispose 后再被误用。
+  imeGuard = null
   if (fitRetryTimer) clearTimeout(fitRetryTimer)
   if (toastTimer) clearTimeout(toastTimer)
   if (repeatTimer) clearInterval(repeatTimer)
   if (onPasteEvent && el.value) {
     el.value.removeEventListener('paste', onPasteEvent)
     onPasteEvent = null
-  }
-  if (pasteHelper) {
-    document.body.removeChild(pasteHelper)
-    pasteHelper = null
   }
   disconnect()
   if (resizeObserver) {

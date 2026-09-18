@@ -76,10 +76,15 @@
   search/web-links/clipboard/unicode11/serialize/image）；主题（深色黑底绿字 / 浅色米白
   黑字）、字号（来自 settings store）动态应用；会话控制帧处理（`\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07`）；搜索悬浮框；鼠标选中自动复制（桌面端）；
-  移动端点击/长按文本调起系统文字工具（`openSystemTextTool`，隐藏 textarea 唤起原生菜单
-  并桥接输入）；**移动端单指纵向拖动滚动**（xterm v6 无原生滚动容器，自行换算行数调
-  `scrollLines`，与轻触手势按 `TAP_SLOP` 阈值区分）；辅助功能键（`KeypadBar`）按键修饰符
-  输入一次后自动解除；向 `paneControls` 注册命令入口（paste/clear/reconnect/search/focus/send）。
+  **移动端长按选词并自动复制**（`handleLongPress` → `selectWordAt`：按触摸坐标算列/行 →
+  按 `wordSeparator` 切词 → `term.select()` → 由 `onSelectionChange` 统一复制 + toast。
+  系统文本选择器/原生菜单已按需求移除）；**移动端单指触摸滚动自研**（xterm 锁定 6.0.0
+  stable 无触摸代码，组件内 `scrollByPixels` 把纵向位移换算成行数调 `term.scrollLines()`，
+  详见第 5 节「xterm 锁定 6.0.0」）；**iOS 第三方输入法
+  双保险**：`installImeFallback`（composition 补发）+ composition 期键盘守卫
+  （`attachCustomKeyEventHandler`，拦替代码键，见第 5 节「xterm 锁定 6.0.0」第 8 条）；辅助功能键
+  （`KeypadBar`）按键修饰符输入一次后自动解除；
+  向 `paneControls` 注册命令入口（paste/clear/reconnect/search/focus/send）。
 - `KeypadBar.vue` — 移动端辅助键条（ESC/Tab/Ctrl/Alt/Shift/Ins/←↓→/符号）；
   长按连发；修饰键（Ctrl/Alt/Shift）变色指示按下态，输入一次后自动解除；
   所有非长按键采用 `@click` + `@touchstart.prevent` 双保险确保移动端可靠触发；
@@ -133,6 +138,54 @@
   实测 props 类型（如 `:ctrl="'yes'"` 传错类型）与模板未定义变量都能报出，无需删 shim。
 - **addon-canvas 不要加回**：其 peer 仍是 `@xterm/xterm@^5`，与 xterm v6 冲突；
   WebGL 不可用时由 xterm 内置 DOM 渲染器兜底。
+- **xterm 锁定 6.0.0 stable（已从 6.1.0-beta 回退），触摸滚动/滚动条自行处理**：
+  `@xterm/xterm@6.0.0` + 各 addon 的 0.11.0/0.19.0/0.16.0/0.2.0 等 stable 组合。
+  曾升级 6.1.0-beta 想用其自带触摸手势，实测**安卓/iOS 上轻触拉不起软键盘**（beta 的
+  Gesture 层 `preventDefault` 掉了浏览器的合成鼠标事件，两端都只能靠组件自己的
+  touchend 聚焦，真机仍无效）——**已整体回退，不要再次升级**。回退后的移动端行为：
+  1) **单指触摸滚动必须自研**：6.0.0 的滚动由 VS Code `SmoothScrollableElement` 驱动
+     （Viewport.ts），`.xterm-viewport` 是空壳（scrollHeight===clientHeight），browser 层
+     **没有任何触摸代码**。`TerminalPane.vue` 用 `touchstart/move/end` 把纵向位移换算成
+     行数调 `term.scrollLines()`（`scrollByPixels`，残差跨 move 累计避免慢拖丢行），
+     `TAP_SLOP=30px` 越过即判拖动、取消长按。
+  2) **滚动条滑块拖动不需要自研**：6.0.0 在 `.scrollbar` 节点监听 `pointerdown`
+     （`_domNodePointerDown → _sliderPointerDown → GlobalPointerMoveMonitor`），内部
+     `setPointerCapture` + window 级 pointermove + preventDefault，触摸/鼠标统一可用
+     （**曾误判需要自接管并实现过一版，后证实多余且与原生抢事件，已删**）。
+     组件只负责两件 CSS 事（style.css）：`(hover: none)` 下让 `.scrollbar.vertical` 与
+     `.slider` 常驻可见并恢复 `pointer-events:auto`（Auto 可见性靠 hover，触屏永远等不到，
+     否则滑块抓不到；`.invisible` 类自带 `pointer-events:none` 必须显式覆盖）+ 滑块热区
+     左右各扩 4px；滑块 `touch-action: none` 防止拖动被认领成页面平移。
+     ⚠️ 选择器必须带 `.vertical`：`.xterm-scrollable-element > .scrollbar.vertical > .slider`，
+     因为同层还有一个 `.scrollbar.horizontal`（不特指会查到横条）。
+     ⚠️ 6.0.0 类名是 `.scrollbar/.slider/.active/.invisible`（beta 才是 `.xterm-scrollbar`
+     等），不要混用。
+  3) **轻触聚焦必须自研**：iOS Safari 不把触摸合成鼠标事件；且 ① 的 `preventDefault`
+     （滚动时必需）会切断 Android 的合成链。两端都只剩 `onTouchEnd` 里的 `focusTerm()`。
+     阈值必须与 xterm 的 tap 判定（位移 <30px 且 <700ms）对齐：若小于 30px，手指漂移
+     10~30px 时组件判「拖动」不聚焦、xterm 判 tap 不滚动，谁都不聚焦、键盘弹不出来。
+  4) **聚焦一律走 `focusTerm()` 而非直接 `term.focus()`**：`term.open()` 之前
+     `.xterm-helper-textarea` 不存在，xterm 内部 `if (this.textarea)` 直接返回，这次聚焦
+     被静默丢弃——表现为「首次点终端没反应，再点一次才行」。`open()` 已提前到挂载时
+     同步执行（终端字体是系统等宽栈，不含 webfont，测量不受 `document.fonts.ready`
+     影响），`focusTerm()` 仍保留 `pendingFocus` 兜底。所有调用点（触摸/辅助键/粘贴/
+     关闭搜索/标签激活/paneControls.focus）都已统一。
+  5) **长按选词无论命中与否都必须聚焦**：`handleLongPress` 命中单词时只 `select()`
+     不聚焦 → 焦点停 BODY、键盘拉不起来；恢复的标签满屏文字落点必中单词，新建标签
+     空白屏落点无词——正是「只有恢复的标签不行，新建标签正常」的成因。
+  6) **`legacyCopy` 用完临时 textarea 必须把焦点还给原元素**：`execCommand('copy')` 要求
+     选区元素聚焦，`ta.focus()` 抢走终端 textarea 的焦点、`removeChild` 后落到 BODY，
+     移动端即键盘收起/拉不起。http 反代部署（`isSecureContext === false`、
+     `navigator.clipboard` 不可用）时每次自动复制都走这条路，桌面端则是「框选后无法
+     直接键入」。
+  7) `term.select(col,row,len)` 的 `row` 是**缓冲区绝对行号**（视口内行 + `viewportY`）；
+     词首定位必须先向左回退到词首。xterm 6.0.0 的 `onSelectionChange` 在 `select()` 内
+     同步触发，`copyText` 的抢焦点发生在 `select()` 返回之前，所以 `handleLongPress`
+     里的 `focusTerm()` 必须放在 `select()` **之后**（现在是在函数开头 + select 之后
+     效果等价，注意别把 focus 挪到 select 前就返回）。
+  8) **beta 的 IME 兜底/守卫与版本无关，保留**：`installImeFallback` +
+     `attachCustomKeyEventHandler` 在 6.0.0 上同样需要（合成 IME 事件实测仍复现候选字
+     丢失），不要随回退一起删。
 - **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07` 均为前后端约定的 OSC 控制序列。
 - **标签恢复的时序**：`App.onMounted` 先 `loadUserMode` 再 `restore`，保证无会话时
@@ -179,22 +232,103 @@
   改动后必须**真机或可视视口可收缩的环境**验证；CDP 的
   `Emulation.setDeviceMetricsOverride/ setVisibleSize` 在部分环境**无法**改变
   `visualViewport`，不能用来判定修复是否生效。
-- **移动端滚动必须自己实现，不要退回依赖 `.xterm-viewport`**：xterm **v6** 起滚动改由
-  VS Code 的 `SmoothScrollableElement` 用 JS 驱动（`Viewport.ts`），`.xterm-viewport` 的
-  原生滚动已是空壳（实测 `scrollHeight === clientHeight`，设 `scrollTop` 无效）。所以：
-  1) 单指拖动滚动由 `TerminalPane.vue` 把位移换算成行数调 `term.scrollLines()` 实现，
-     位移超 `TAP_SLOP`(10px) 判定为滚动、否则仍调起系统文字工具；
-  2) `.term-container` 与 xterm 滚动条都必须 `touch-action: none`，否则纵向拖动会被浏览器
-     认领为整页平移，iOS 上就是「页面抖动/橡皮筋回弹」；
-  3) 触屏下滚动条默认 `opacity:0 + visibility:hidden + pointer-events:none`（Auto 可见性靠
-     hover 触发，触屏永远等不到），需在 `@media (hover: none)` 里显式恢复**三者**——只恢复
-     `opacity/visibility` 会看得见却点不到（`pointer-events` 由 xterm 的 `.invisible` 类设置）；
-  4) 滚动位置由 `stickToBottom`（`term.onScroll` 维护）守护：后台输出/尺寸重排只在跟随底部时
-     才 `scrollToBottom()`，用户主动输入才 `pinToBottom()`，否则会把用户翻上去的历史顶掉。
-  5) 轻触调起系统文字工具在移动端**当前不生效**（隐藏 textarea 聚焦后被 xterm 的
-     `xterm-helper-textarea` 抢走焦点，随即 `blur` → `cleanup` 删除）；已在 HEAD 基线复核为
-     **既有问题**，非本次改动引入。
-
+- **移动端触摸与滚动的版本无关约束**（实现细节见上方「xterm 锁定 6.0.0 stable」）：
+  1) `.term-container` 必须保持 `touch-action: none`：否则纵向拖动会被浏览器认领为整页平移，
+     iOS 上就是「页面抖动/橡皮筋回弹」。自研滚动在 touchmove 里 `preventDefault`（`e.cancelable`
+     判空防报错），与该声明双保险。
+  2) 滚动位置由 `stickToBottom`（`term.onScroll` 维护）守护：后台输出/尺寸重排只在跟随底部时
+     才 `scrollToBottom()`，用户主动输入才 `pinToBottom()`。自研 `term.scrollLines()` 默认
+     `suppressEvent=false`，会触发 `onScroll`，该机制不受回退影响（实测滑块随动）。
+  3) **不要依赖浏览器把触摸合成为鼠标事件**：xterm v6 的 browser 层只监听 `mousedown/mousemove/
+     mouseup`，`SelectionService` 靠 `event.detail`(1/2/3) 区分单/双/三击选词，**没有任何触摸
+     代码**。Android Chrome 会把双击合成为 `detail=2` 的 `mousedown`，所以「双击选词」能用；
+     **iOS Safari 不合成**，轻触/长按/双击全都无反应——因此移动端选词由
+     `TerminalPane.vue` 自行实现（`handleLongPress`），不依赖合成事件。
+     注意 `term.select(col,row,len)` 的 `row` 是**缓冲区绝对行号**（视口内行 + `viewportY`，
+     与 xterm 内部 `_getMouseBufferCoords` 的 `+ydisp` 一致），算错会导致选中错行。
+     词首定位必须先**向左回退到词首**：落点在词中间时若直接以落点为起点，`world` 会截成 `rld`。
+  4) **系统文本选择器/原生菜单已移除，不要加回来**：隐藏 textarea 的焦点会被 xterm 抢走
+     （`CoreBrowserTerminal` 在 `mousedown` 里 `preventDefault + focus()`），iOS 上该路径本就不
+     生效，且会打断输入法状态机。移动端的复制路径只有「长按选词 → `onSelectionChange` 自动
+     复制」，桌面端为「鼠标框选自动复制」。
+  5) **iOS 第三方输入法采用「兜底 + 守卫」双保险（与 xterm 6.0.0/beta 版本无关）**：
+     - 兜底 `installImeFallback` **只能覆盖 composition 路径，不要放宽**：搜狗/百度/微信键盘等
+       提交候选字后会**立即清空**隐藏 textarea，而 xterm 的 `CompositionHelper._finalizeComposition`
+       是「`compositionend` 后用 `setTimeout(0)` 再读 `textarea.value.substring(...)`」，此时读到
+       空串 → 中文候选字**永远发不出去**。`installImeFallback` 用 `compositionupdate.data`
+       （`compositionend.data` 在 iOS 上常为空串）作为候选文本，在 `compositionend` 后延时检查
+       「xterm 这段时间内是否已发出包含该文本的数据」，只有没发过才补发。
+       **实测边界（重要）**：`Input.insertText`、`keyDown/keyUp` 这些路径 xterm **本来就正常**，
+       兜底一旦介入就会变成重复发送（踩过：范围放宽后英文变成双份 `["a","a"]`）。所以
+       `installImeFallback` 只监听 `compositionstart/update/end` 三个事件，绝不监听
+       `input`/`keydown`。两个实现约束：① 必须在 `term.open()` **之后**安装
+       （`.xterm-helper-textarea` 由 `open()` 创建）；② 判重必须比对**内容**（`recentSent`）
+       而非发送条数。
+     - 守卫 `attachCustomKeyEventHandler`（issue #4486 的 workaround 路线，同
+       microsoft/vscode#320525）：中文 IME 输入「、」「。」等标点时，第三方键盘会把该按键
+       映射成**替代码**（如 `\`）发一个非 229 的 keydown；xterm 的 `CompositionHelper` 看到
+       非 229 的 keydown 会 `_finalizeComposition(false)` 结束组合并把**原始键码**当普通键发出
+       （PTY 收到 `\` 而不是「、」）。守卫在 composition 期间对 keydown/keyup/keypress 一律
+       返回 false，组合文本仍经 compositionend 正常提交。iOS 的 `KeyboardEvent.isComposing`
+       不可靠，故同时维护 `compositionstart/end` 自设标志（`endGuard` 延时一拍放行），再叠加
+       `ev.isComposing` 兜底。监听也挂在 textarea 上、随 `installImeFallback` 一起装
+       （同样必须 `open()` 之后）。
+  6) **`keyCode=229` 的重复发送是 xterm 固有行为，不是本项目的 bug**：CDP 派发
+     `keyDown(229)+keyUp` 时会出现 `keydown:229 → keypress → input` 三个事件，xterm 会发送
+     两次（`["x","x"]`）。已在 HEAD 基线上复核为完全相同的表现，不要试图在前端"修"它。
+     注意沙箱里只能用 CDP 派发事件，无法复现 iOS 真实键盘的全部细节——涉及输入法的判断
+     应以真机为准，不要仅凭沙箱现象下结论。
+     （验证提示：合成 `KeyboardEvent` 在 Chromium 里**无法携带 keyCode**（构造器忽略之），
+     xterm 收到 keyCode=0 会丢弃，故 Playwright/CDP 下 xterm 键盘路径**表现为无输入**——
+     这是环境限制而非回归；守卫逻辑可在独立页面加载 xterm 后用
+     `Object.defineProperty(e,'keyCode',{get:...})` 方式单元验证。触摸手势/滚动/长按选词/
+     自动复制均可用 `hasTouch: true` + 合成 TouchEvent 端到端跑通。）
+- **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
+  `\x1b]ready\x07` / `\x1b]exit\x07` 均为前后端约定的 OSC 控制序列。
+- **标签恢复的时序**：`App.onMounted` 先 `loadUserMode` 再 `restore`，保证无会话时
+  新建标签按正确用户模式（custom → 登录用户）。
+- **功能名折叠**：`labelsOn` 控制桌面功能名显示；仅**手动**展开（《》按钮），
+  溢出**自动收起**；不要恢复旧的“宽度检测自动展开”逻辑。
+- **验证会话环境时的沙箱陷阱（曾导致误判）**：在沙箱/CI 里验证 `buildSessionEnv`，
+  测试进程（agent 的 shell）自带 `HOME`/`PWD`，二者会与函数构造的值**同名竞争**而
+  掩盖真实行为。部署环境（`trim_app_center.service` 无 `User=`/`Environment=`，
+  systemd 不注入 `HOME`）并不会这样。结论：验证这类逻辑必须**显式构造或清除**相关
+  变量，不要拿"当前 shell 的环境"当部署环境；也不要仅凭沙箱现象就判定线上有 bug。
+- **`appcenter-cli` 需要权限**：普通用户直接执行会
+  `panic: dial unix /run/trim_app_cgi/rpcbroker: permission denied`（该 socket 属
+  `OfficialAppUsers` 组）；后端以 root 运行时可正常执行，失败时 `apps.go` 会记录日志并
+  **回退扫描 `/var/apps`**，功能不至于完全不可用。
+- **应用用户的 HOME 必须自己赋予**：系统不会给应用用户设 HOME（`/etc/passwd` 里是
+  `/home/<app>`，但该目录并不存在）。`buildSessionEnv` 把 `HOME`/`PWD` 都设为
+  `/var/apps/<APP NAME>/home`——它既是 `cmd.Dir`，也是 `~` 的落点。两者必须一致，
+  否则 bash 提示符不会显示 `~`。
+- **HOME/PWD 必须唯一且不可被继承值覆盖**：环境变量重复时**后者生效**。后端由
+  appcenter 脚本经 bash 启动，父进程会导出 `HOME`/`PWD`，若直接 `append(os.Environ())`
+  就会顶掉我们设的值（实测后果：`HOME` 错误 + `PWD` 变成软链的物理路径
+  `/vol1/@apphome/<app>`，提示符显示完整路径而非 `~`）。故 `buildSessionEnv` 先从
+  继承环境里**剔除** `HOME`/`PWD` 再追加目标用户的值——新增需要强制的变量时请照此处理，
+  不要直接把 `os.Environ()` 追加到末尾。
+- **部分应用没有同名系统用户**（如 `Nvidia-Driver-580`、`fnpackup`、`trim.media`），
+  无法 setuid，已在 `/api/apps` 列表中被过滤掉——不要"修好"成显示出来。
+- **外部部署行为**：本仓库构建产物可能被外部部署机制移动/重启
+  （如 `/vol1/@appcenter/Terminal/bin/terminal`），工作区二进制消失/更新属外部流程，
+  不要误判为构建失败。
+- **paneControls 按 uid 注册**：`pc.register(uid, c)` / `pc.get(activeUid)`——顶栏按钮
+  若再使用单一共享对象会导致操作作用于后台标签（历史 bug）。
+- **虚拟键盘适配（iOS 底栏不跟随的根因）**：`index.html` 的
+  `interactive-widget=resizes-content` **只对 Chrome/Firefox for Android 生效**；
+  **Safari 至今不支持**（WebKit 已实现，尚未随版本发布），iOS 上键盘弹起只收缩
+  「可视视口」（`visualViewport`），布局视口与 `100dvh` 都不变。因此**不要把壳层高度
+  退回 `100dvh`**：`.app-shell` 由 `useViewportHeight()` 写入的 `--vvh` 驱动，
+  并用 `position: fixed; top: var(--vvt)` 钉在可视视口矩形上（键盘弹起时 iOS 会把可视
+  视口下移，靠 `top` 跟随；若改用 `margin/transform` 会让文档高于视口而产生多余滚动，
+  反过来干扰 `offsetTop`）。`--vvh/--vvt/--kb-safe-bottom` 三者是一组，缺一个就会
+  出现「底栏被键盘盖住 / 与键盘之间多一条安全区空隙 / 终端不收缩」。
+  纯 CSS 无法替代：`env(keyboard-inset-height)` 需要 VirtualKeyboard API（未启用），
+  `@supports (height: var(--vvh))` 恒为假（`@supports` 条件含 `var()` 按规范判不支持）。
+  改动后必须**真机或可视视口可收缩的环境**验证；CDP 的
+  `Emulation.setDeviceMetricsOverride/ setVisibleSize` 在部分环境**无法**改变
+  `visualViewport`，不能用来判定修复是否生效。
 ---
 
 ## 6. 命令速查

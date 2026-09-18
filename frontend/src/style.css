@@ -157,9 +157,9 @@ body {
  * - overflow: clip（而非 hidden）：clip 不产生「可编程滚动」的滚动容器。若用 hidden，
  *   移动端虚拟键盘弹出时浏览器为把获得焦点的隐藏 textarea 拉入可视区，会去滚动最近的
  *   滚动容器，把顶栏与终端区域整体推走，表现为区域跳动闪烁。
- * - touch-action: none：终端区域的纵向拖动由 TerminalPane 自己处理（xterm v6 的滚动是 JS
- *   驱动的，浏览器没有可平移的原生滚动内容）。若不声明，手指纵向拖动会被浏览器认领为页面
- *   平移 → iOS 上表现为整页橡皮筋回弹（即「页面抖动」）。横向仍可捏合缩放页面级手势。 */
+ * - touch-action: none：终端区域的纵向拖动由 TerminalPane 自研处理（xterm 6.0.0 的滚动
+ *   是 JS 驱动的，浏览器没有可平移的原生滚动内容）。若不声明，手指纵向拖动会被浏览器
+ *   认领为页面平移 → iOS 上表现为整页橡皮筋回弹（即「页面抖动」）。横向仍可捏合缩放页面级手势。 */
 .term-container {
   height: 100%;
   width: 100%;
@@ -207,35 +207,36 @@ body {
   flex: none;
 }
 
-/* xterm 滚动条（v6 起由 VS Code 的 ScrollableElement 渲染，DOM 在 .xterm-scrollable-element
- * 下）。两条修复：
- * - touch-action: none：不然手指拖动滑块会被浏览器认领为页面平移，iOS 上触发橡皮筋回弹
- *   ——即「拖滚动条导致整页抖动」；xterm 只监听 pointerdown/pointermove，需要浏览器不抢手势。
- * - 触屏设备上滑块默认是 opacity:0 / visibility:hidden / pointer-events:none（Auto 可见性靠
- *   hover 触发，触屏永远等不到 hover），等于抓不到。故在 (hover: none) 下让它常驻可见，
- *   并把热区加宽到 12px（滑块本身只有 10px 且很细，触屏不好按）。 */
-.xterm .xterm-scrollable-element > .scrollbar,
-.xterm .xterm-scrollable-element > .scrollbar > .slider {
+/* xterm 滚动条（6.0.0 stable：.xterm-scrollable-element > .visible/.invisible.scrollbar.vertical
+ * > .slider）。xterm 的滑块拖动走 GlobalPointerMoveMonitor（pointer 事件），且滑块显隐是
+ * Auto 可见性——触屏永远等不到 hover，滑块 opacity:0 / pointer-events:none，等于抓不到。
+ * 已回退 6.0.0 并由 TerminalPane 自接管滑块拖动，这里补两条触屏必需规则：
+ * - (hover: none) 下让滑块常驻可见并恢复可命中，热区向左右各扩 4px 方便手指按住；
+ * - 滑块 touch-action: none：防止拖滑块被浏览器认领为页面平移（iOS 橡皮筋回弹）。
+ *   .term-container 虽已声明 touch-action: none，内部元素按规范会继承该约束，但部分
+ *   老内核对非「可滚动目标」的继承不可靠，显式声明兜底。 */
+.xterm .xterm-scrollable-element > .scrollbar.vertical,
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
   touch-action: none;
 }
 
 @media (hover: none) {
-  .xterm .xterm-scrollable-element > .scrollbar,
-  .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  .xterm .xterm-scrollable-element > .scrollbar.vertical,
+  .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
     opacity: 1;
     visibility: visible;
     /* xterm 的 .invisible 类同时设了 pointer-events: none，必须显式恢复，
        否则滑块虽然看得见却点不到（实测 elementFromPoint 命中不到滑块）。 */
     pointer-events: auto;
   }
-  .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
     background: rgba(128, 128, 128, 0.45);
     /* 视觉宽度仍 10px，热区向左右各扩 4px，方便手指按住 */
     border-left: 4px solid transparent;
     border-right: 4px solid transparent;
     background-clip: padding-box;
   }
-  .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+  .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider.active {
     background: rgba(128, 128, 128, 0.75);
     background-clip: padding-box;
   }

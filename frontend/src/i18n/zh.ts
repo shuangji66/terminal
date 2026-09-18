@@ -33,6 +33,7 @@ export const zh: Record<string, string> = {
   no_selection: '没有选中内容',
   select_hint: '请直接框选文本复制',
   not_connected: '终端未连接',
+  paste_denied: '无法读取剪贴板，请用系统键盘的粘贴',
 
   theme_label: '主题',
   theme_light: '浅色',
