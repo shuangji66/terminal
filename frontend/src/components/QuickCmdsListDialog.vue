@@ -63,22 +63,27 @@ async function moveDown(idx: number) {
 <template>
   <Teleport to="body">
     <Transition name="modal-fade">
-      <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div v-if="open" class="fixed inset-0 z-50">
+        <!-- 遮罩仍铺满全屏（维持模态语义：点任意处关闭，含顶栏区域） -->
         <div class="absolute inset-0 bg-black/50" @click="close"></div>
-        <div
-          class="relative w-full max-w-lg bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop flex flex-col"
-        >
-          <!-- 顶部：标题 + 新增 / 关闭 -->
-          <div class="flex items-center justify-between px-5 py-3 border-b border-line dark:border-line-dark">
-            <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('qc_title') }}</h3>
-            <div class="flex items-center gap-2">
-              <button class="g-btn-primary !h-8 px-4 text-sm" @click="emit('add')">{{ t('qc_add') }}</button>
-              <button class="g-btn-ghost !h-8 px-3 text-sm" @click="close">{{ t('qc_close') }}</button>
+        <!-- 面板所在层对齐「终端区域」矩形（壳高/壳顶偏移 − 顶栏，见 style.css 的 .qc-region）：
+             面板高度因此与终端区一致，且不会被顶栏或底部键条压住；
+             宽度仍由 max-w-lg 居中限制（卡片式，不满宽）。 -->
+        <div class="absolute left-0 right-0 qc-region flex items-center justify-center px-4">
+          <div
+            class="qc-panel relative w-full max-w-lg bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop flex flex-col"
+          >
+            <!-- 顶部：标题 + 新增 / 关闭 -->
+            <div class="flex items-center justify-between px-5 py-3 border-b border-line dark:border-line-dark shrink-0">
+              <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('qc_title') }}</h3>
+              <div class="flex items-center gap-2">
+                <button class="g-btn-primary !h-8 px-4 text-sm" @click="emit('add')">{{ t('qc_add') }}</button>
+                <button class="g-btn-ghost !h-8 px-3 text-sm" @click="close">{{ t('qc_close') }}</button>
+              </div>
             </div>
-          </div>
 
-          <!-- 命令卡片列表 -->
-          <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3 max-h-[50vh]">
+            <!-- 命令卡片列表：撑满剩余高度，内部滚动（不再用 max-h-[50vh]，否则面板变高后仍被截断） -->
+            <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3">
             <div v-if="store.loading" class="text-sm text-ink-soft dark:text-ink-soft-dark text-center py-8">
               {{ t('loading') }}
             </div>
@@ -146,6 +151,7 @@ async function moveDown(idx: number) {
                 </button>
               </div>
             </div>
+          </div>
           </div>
         </div>
       </div>

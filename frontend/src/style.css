@@ -90,6 +90,10 @@ body,
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/* 注意：顶栏总高（--tabbar-h）不在这里拼算，而是由 useViewportHeight() 实测 header
+ * 写入 <html>（含刘海安全区、移动端第二行、边框——拼算一改结构就失准）。
+ * 需要「与终端区域同高」的浮层用 var(--tabbar-h, 0px)：变量缺失时退化为不扣顶栏。 */
+
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -257,6 +261,20 @@ body {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
   transition: opacity 200ms ease;
   pointer-events: none;
+}
+
+/* 快捷指令面板：与「终端区域」同矩形。终端区 = 壳层（高度 --vvh、顶部偏移 --vvt）
+ * 减去顶栏；面板上下边界因此与终端区严格对齐、高度自动相等。
+ * 不用 100vh/50vh 这类视口单位：iOS 上键盘弹起/地址栏收合只改可视视口，vh 会算错。
+ * 也不用 `bottom: 0`（它相对布局视口，键盘弹起时壳层底边被 --vvt 下移后会错位）。
+ * 两个变量都带回退值：--tabbar-h 缺失时按 0 处理（面板占满整个壳层，不会塌成 0 高），
+ * --vvh 缺失时退 100dvh。宽度仍由 max-w-lg 居中限制（卡片式，不满宽）。 */
+.qc-region {
+  top: calc(var(--vvt, 0px) + var(--tabbar-h, 0px));
+  height: calc(var(--vvh, 100dvh) - var(--tabbar-h, 0px));
+}
+.qc-panel {
+  height: 100%;
 }
 
 /* ===== 可复用组件类 ===== */

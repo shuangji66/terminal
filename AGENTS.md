@@ -92,7 +92,8 @@
 - `composables/useViewportHeight.ts` — **虚拟键盘适配（App 壳层调用一次）**：监听
   `visualViewport` 的 `resize`/`scroll`，把可视视口几何写入 `<html>` 的 CSS 变量：
   `--vvh`（可视视口高度 = `.app-shell` 高度）、`--vvt`（可视视口相对布局视口的位移 =
-  `.app-shell` 的 `top`）、`--kb-safe-bottom`（键盘弹起时 0，覆盖键条的安全区内边距）。
+  `.app-shell` 的 `top`）、`--kb-safe-bottom`（键盘弹起时 0，覆盖键条的安全区内边距）、
+  `--tabbar-h`（**实测**顶栏高度，见第 5 节「浮层与终端区域对齐」）。
   不用 `100dvh` 的原因见第 5 节「虚拟键盘适配」。
 - `stores/` — `sessions`（标签 + userSpec + 恢复/关闭）、`settings`（用户模式 + 字号，
   字号存 localStorage）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
@@ -124,6 +125,17 @@
 
 ## 5. 常见的坑（Gotchas）
 
+- **浮层与「终端区域」对齐（快捷指令弹窗的尺寸依据）**：终端区域 = `.app-shell`
+  （高度 `--vvh`、顶部偏移 `--vvt`）**减去顶栏**；顶栏高度由 `useViewportHeight()`
+  **实测** `<header>` 写入 `--tabbar-h`（`onMounted` 首测 + `ResizeObserver` 跟踪，
+  断点切换/功能名折叠/旋转后自动更新）。需要与终端区同高的浮层用 style.css 的
+  `.qc-region`：`top: calc(var(--vvt,0px) + var(--tabbar-h,0px))`、
+  `height: calc(var(--vvh,100dvh) - var(--tabbar-h,0px))`（`.qc-panel` 撑满它）。
+  **不要**用 `100vh/50vh`（iOS 键盘弹起/地址栏收合只改可视视口，vh 会算错）、
+  **不要**用 `bottom: 0`（相对布局视口，键盘弹起时壳层底边被 `--vvt` 下移后错位）、
+  **不要**在 CSS 里按 TabBar 的 padding/border 拼算顶栏高（改结构即失准；移动端第二行
+  实测盒高比 `min-h-10` 多 1px，拼算会差 1px）。两个变量都写了回退值，缺失时不会塌高。
+  当前唯一使用者是快捷指令弹窗（宽度仍 `max-w-lg` 居中卡片，高度与终端区一致）。
 - **历史文件必须以 `O_RDWR` 打开**：`O_WRONLY` 打开后 attach 回放 / history API 读取
   会得到 `bad file descriptor`（EBADF）。
 - **PTY 按用户切换依赖 root**：非 root 进程对 `user=root` 或不同 uid 会 `permission
@@ -283,52 +295,7 @@
      这是环境限制而非回归；守卫逻辑可在独立页面加载 xterm 后用
      `Object.defineProperty(e,'keyCode',{get:...})` 方式单元验证。触摸手势/滚动/长按选词/
      自动复制均可用 `hasTouch: true` + 合成 TouchEvent 端到端跑通。）
-- **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
-  `\x1b]ready\x07` / `\x1b]exit\x07` 均为前后端约定的 OSC 控制序列。
-- **标签恢复的时序**：`App.onMounted` 先 `loadUserMode` 再 `restore`，保证无会话时
-  新建标签按正确用户模式（custom → 登录用户）。
-- **功能名折叠**：`labelsOn` 控制桌面功能名显示；仅**手动**展开（《》按钮），
-  溢出**自动收起**；不要恢复旧的“宽度检测自动展开”逻辑。
-- **验证会话环境时的沙箱陷阱（曾导致误判）**：在沙箱/CI 里验证 `buildSessionEnv`，
-  测试进程（agent 的 shell）自带 `HOME`/`PWD`，二者会与函数构造的值**同名竞争**而
-  掩盖真实行为。部署环境（`trim_app_center.service` 无 `User=`/`Environment=`，
-  systemd 不注入 `HOME`）并不会这样。结论：验证这类逻辑必须**显式构造或清除**相关
-  变量，不要拿"当前 shell 的环境"当部署环境；也不要仅凭沙箱现象就判定线上有 bug。
-- **`appcenter-cli` 需要权限**：普通用户直接执行会
-  `panic: dial unix /run/trim_app_cgi/rpcbroker: permission denied`（该 socket 属
-  `OfficialAppUsers` 组）；后端以 root 运行时可正常执行，失败时 `apps.go` 会记录日志并
-  **回退扫描 `/var/apps`**，功能不至于完全不可用。
-- **应用用户的 HOME 必须自己赋予**：系统不会给应用用户设 HOME（`/etc/passwd` 里是
-  `/home/<app>`，但该目录并不存在）。`buildSessionEnv` 把 `HOME`/`PWD` 都设为
-  `/var/apps/<APP NAME>/home`——它既是 `cmd.Dir`，也是 `~` 的落点。两者必须一致，
-  否则 bash 提示符不会显示 `~`。
-- **HOME/PWD 必须唯一且不可被继承值覆盖**：环境变量重复时**后者生效**。后端由
-  appcenter 脚本经 bash 启动，父进程会导出 `HOME`/`PWD`，若直接 `append(os.Environ())`
-  就会顶掉我们设的值（实测后果：`HOME` 错误 + `PWD` 变成软链的物理路径
-  `/vol1/@apphome/<app>`，提示符显示完整路径而非 `~`）。故 `buildSessionEnv` 先从
-  继承环境里**剔除** `HOME`/`PWD` 再追加目标用户的值——新增需要强制的变量时请照此处理，
-  不要直接把 `os.Environ()` 追加到末尾。
-- **部分应用没有同名系统用户**（如 `Nvidia-Driver-580`、`fnpackup`、`trim.media`），
-  无法 setuid，已在 `/api/apps` 列表中被过滤掉——不要"修好"成显示出来。
-- **外部部署行为**：本仓库构建产物可能被外部部署机制移动/重启
-  （如 `/vol1/@appcenter/Terminal/bin/terminal`），工作区二进制消失/更新属外部流程，
-  不要误判为构建失败。
-- **paneControls 按 uid 注册**：`pc.register(uid, c)` / `pc.get(activeUid)`——顶栏按钮
-  若再使用单一共享对象会导致操作作用于后台标签（历史 bug）。
-- **虚拟键盘适配（iOS 底栏不跟随的根因）**：`index.html` 的
-  `interactive-widget=resizes-content` **只对 Chrome/Firefox for Android 生效**；
-  **Safari 至今不支持**（WebKit 已实现，尚未随版本发布），iOS 上键盘弹起只收缩
-  「可视视口」（`visualViewport`），布局视口与 `100dvh` 都不变。因此**不要把壳层高度
-  退回 `100dvh`**：`.app-shell` 由 `useViewportHeight()` 写入的 `--vvh` 驱动，
-  并用 `position: fixed; top: var(--vvt)` 钉在可视视口矩形上（键盘弹起时 iOS 会把可视
-  视口下移，靠 `top` 跟随；若改用 `margin/transform` 会让文档高于视口而产生多余滚动，
-  反过来干扰 `offsetTop`）。`--vvh/--vvt/--kb-safe-bottom` 三者是一组，缺一个就会
-  出现「底栏被键盘盖住 / 与键盘之间多一条安全区空隙 / 终端不收缩」。
-  纯 CSS 无法替代：`env(keyboard-inset-height)` 需要 VirtualKeyboard API（未启用），
-  `@supports (height: var(--vvh))` 恒为假（`@supports` 条件含 `var()` 按规范判不支持）。
-  改动后必须**真机或可视视口可收缩的环境**验证；CDP 的
-  `Emulation.setDeviceMetricsOverride/ setVisibleSize` 在部分环境**无法**改变
-  `visualViewport`，不能用来判定修复是否生效。
+
 ---
 
 ## 6. 命令速查
