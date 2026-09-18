@@ -230,6 +230,14 @@
   不要误判为构建失败。
 - **paneControls 按 uid 注册**：`pc.register(uid, c)` / `pc.get(activeUid)`——顶栏按钮
   若再使用单一共享对象会导致操作作用于后台标签（历史 bug）。
+- **`crypto.randomUUID()` 是 SecureContext-only，http 部署不可用**：本项目的典型访问
+  方式正是 http 反代（`window.isSecureContext === false`），此时 `crypto.randomUUID`
+  为 `undefined`，直接调用抛 `TypeError: crypto.randomUUID is not a function`
+  （曾导致「http 访问下新增/编辑快捷指令失败」）。安全上下文无关的替代只有同一
+  `crypto` 对象上的 `getRandomValues`；新增需要 id 的地方统一走
+  `stores/quickCmds.ts` 的 `newCmdId()`（优先 `randomUUID`，否则手拼 v4 UUID），
+  **不要再直接调用 `crypto.randomUUID()`**。同理 `navigator.clipboard` 在 http 下也不存在
+  （剪贴板已有 `legacyCopy` 兜底，见 `TerminalPane.vue`）。
 - **虚拟键盘适配（iOS 底栏不跟随的根因）**：`index.html` 的
   `interactive-widget=resizes-content` **只对 Chrome/Firefox for Android 生效**；
   **Safari 至今不支持**（WebKit 已实现，尚未随版本发布），iOS 上键盘弹起只收缩
