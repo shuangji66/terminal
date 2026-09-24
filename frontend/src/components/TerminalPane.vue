@@ -43,6 +43,7 @@ let imeGuard: {
   detach(textarea: HTMLTextAreaElement): void
 } | null = null
 let searchAddon: SearchAddon | null = null
+let webglAddon: WebglAddon | null = null
 let sock: WebSocket | null = null
 let termOpened = false
 let disposed = false
@@ -58,6 +59,26 @@ let fitRetryTimer: number | null = null
 let onPasteEvent: ((ev: ClipboardEvent) => void) | null = null
 let toastTimer: number | null = null
 let repeatTimer: number | null = null
+
+// 渲染器调试开关：URL 带 ?nogl=1 时强制使用 xterm 内置 DOM 渲染器（不加载 WebglAddon）。
+// 仅用于定位「WebGL 合成层相关」的显示问题——让排查者不必改代码重建就能 A/B 出到底是
+// WebGL 渲染还是别的层。（iframe 内本来就是 DOM 渲染器，见 initTerminal 里的选择逻辑。）
+function webglDisabled(): boolean {
+  try {
+    return new URLSearchParams(location.search).get('nogl') === '1'
+  } catch {
+    return false
+  }
+}
+
+// 是否被桌面外壳嵌在 iframe 窗口里。只比较引用，不去读 top 的属性，跨域也安全。
+function inEmbeddedFrame(): boolean {
+  try {
+    return window.self !== window.top
+  } catch {
+    return true
+  }
+}
 
 // 会话不存在标记：收到 "session not found" 后丢弃旧 id，连接关闭时自动重建
 let recreateOnClose = false
@@ -1014,11 +1035,35 @@ function initTerminal() {
   }
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
-  try {
-    term.loadAddon(new WebglAddon())
-  } catch (e) {
-    // WebGL 不可用时回退到 xterm 内置 DOM 渲染器
-    console.warn('webgl addon:', e)
+  // 渲染器选择：**嵌在 iframe 里时（桌面外壳窗口）默认用 xterm 内置 DOM 渲染器**。
+  // 原因：外壳「拖动窗口」= 移动 iframe 元素 → 合成器每帧要把 iframe 内容重新光栅化，而
+  // WebGL 的绘图缓冲在每次合成后即被清空，那一帧 canvas 就是空的 —— 表现为拖动时文字/光标
+  // 整块闪（背景看着正常，因为主题背景同时画在 .xterm-viewport 的 CSS 背景上）。开
+  // preserveDrawingBuffer 也压不住（真机实测仍闪），换 DOM 渲染器即不闪（DOM 内容不依赖
+  // 绘图缓冲）。顶层标签页不复现——平移顶层页面是纯合成操作，不需要重光栅——继续用 WebGL
+  // 保吞吐。所以这里不要改成「一律 DOM」，也不要退回「一律 WebGL」；详见 AGENTS.md。
+  // ?nogl=1 可把顶层也强制成 DOM（二分显示问题用）。
+  if (webglDisabled()) {
+    console.warn('renderer: DOM (forced by ?nogl=1)')
+  } else if (inEmbeddedFrame()) {
+    console.warn('renderer: DOM (embedded in an iframe)')
+  } else {
+    try {
+      const addon = new WebglAddon()
+      // 上下文丢失（GPU 驱动重置 / 图层重建失败）后渲染器已不可用，不摘除会永久停在黑屏：
+      // 摘掉 addon 后 xterm 自动换回内置 DOM 渲染器并重绘一次（上游推荐用法）。
+      addon.onContextLoss(() => {
+        console.warn('webgl context loss → fallback to DOM renderer')
+        if (webglAddon === addon) webglAddon = null
+        addon.dispose()
+        term?.refresh(0, (term.rows || 1) - 1)
+      })
+      term.loadAddon(addon)
+      webglAddon = addon
+    } catch (e) {
+      // WebGL 不可用时回退到 xterm 内置 DOM 渲染器
+      console.warn('webgl addon:', e)
+    }
   }
   try {
     term.loadAddon(new WebLinksAddon())
@@ -1251,6 +1296,8 @@ onBeforeUnmount(() => {
     window.removeEventListener('resize', debouncedFit)
   }
   cancelPendingFit()
+  // webglAddon 由 term.dispose() 一并释放；这里只清引用，避免 dispose 后再被误用
+  webglAddon = null
   term?.dispose()
   term = null
 })

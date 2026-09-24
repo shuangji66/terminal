@@ -152,6 +152,30 @@
   实测 props 类型（如 `:ctrl="'yes'"` 传错类型）与模板未定义变量都能报出，无需删 shim。
 - **addon-canvas 不要加回**：其 peer 仍是 `@xterm/xterm@^5`，与 xterm v6 冲突；
   WebGL 不可用时由 xterm 内置 DOM 渲染器兜底。
+- **iframe 内必须用 xterm 内置 DOM 渲染器（`preserveDrawingBuffer` 压不住）**：本应用通常被
+  桌面外壳（飞牛 OS 桌面等）嵌在 iframe 窗口里，「拖动窗口」= 移动 iframe 元素 → 合成器每帧
+  重新光栅化 iframe 内容，此时 WebGL canvas 会整块掉字形/光标 —— 现象是**拖动时文字和光标闪，
+  背景看着正常（主题背景同时画在 canvas 和 `.xterm-viewport` 的 CSS 背景上）、不错行不跳动，
+  独立标签页不复现**。真机实测：`new WebglAddon(true)`（`preserveDrawingBuffer`）**仍然闪**，
+  `?nogl=1` 换 DOM 渲染器才不闪。故 `TerminalPane.vue` 按 `window.self !== window.top` 选渲染器：
+  **iframe 内 = DOM 渲染器（默认，不给用户开关）；顶层标签页 = WebGL**（平移顶层页面是纯合成
+  操作、不需要重光栅，保留输出吞吐）。**不要**图省事改成「一律 DOM」（顶层白白损失吞吐），
+  也**不要**退回「一律 WebGL」（桌面窗口里必闪）。
+  机制侧实测（Playwright + headless Chromium/SwiftShader）：`pdb=false` 时让 iframe 跨若干
+  合成帧移动后回读 canvas 得 **0** 个字形像素，`pdb=true` 仍为全量 —— 缓冲确实会被清空，但
+  **保留缓冲并不足以救回合成器那一帧**，别把 `preserveDrawingBuffer` 当解法。另注意 headless
+  下**复现不了闪烁本身**（软件合成逐帧像素完全一致，sd=0.00），这类问题只能真机拖动验证。
+- **iframe 里「移动窗口」型拖动，子文档收不到任何事件**：实测 `resize` / `ResizeObserver` /
+  `visualViewport` 回调全为 0（只有拉伸窗口才会逐帧触发）。所以别指望用事件判断「正在被
+  拖动」，也别把这类闪烁当 fit/重排问题去修（fit 防抖那条只覆盖拉伸场景）。
+- **WebGL 上下文丢失必须摘掉 addon**：xterm 收到 `webglcontextlost` 后**先等 3s**（给恢复
+  机会）才 fire `onContextLoss`，不处理就会永久停在空白画面。`TerminalPane.vue` 在
+  `onContextLoss` 里 `addon.dispose()`（xterm 随即换回内置 DOM 渲染器）并 `term.refresh()`
+  重绘一次。排查提示：上下文丢失后 `getContextAttributes()` 返回 `null`，别拿它判断渲染器
+  是否还在；测试要按 3s 以上等待，否则会误判「回退没生效」。
+- **渲染器调试开关 `?nogl=1`**：强制走 xterm 内置 DOM 渲染器，用于把「WebGL 合成层」类
+  显示问题与其它层（fit/布局/桌面外壳）一刀切开，不必改代码重建。iframe 内本来就是 DOM
+  渲染器，该开关主要给顶层标签页用（正常访问不带参数，顶层走 WebGL）。
 - **xterm 锁定 6.0.0 stable（已从 6.1.0-beta 回退），触摸滚动/滚动条自行处理**：
   `@xterm/xterm@6.0.0` + 各 addon 的 0.11.0/0.19.0/0.16.0/0.2.0 等 stable 组合。
   曾升级 6.1.0-beta 想用其自带触摸手势，实测**安卓/iOS 上轻触拉不起软键盘**（beta 的
