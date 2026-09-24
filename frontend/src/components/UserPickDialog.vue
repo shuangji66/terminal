@@ -5,9 +5,13 @@
 //      已过滤 trim.* 系统软件与不可用项）；选中后以 user=app:<APP NAME> 进入 bash，
 //      HOME 与工作目录都为该应用家目录（系统不会给应用用户设 HOME，由后端赋予），
 //      因此进入后 ~ 即该目录。路径模板由后端经 homeTemplate 下发，前端不硬编码。
+//  列表来自 appUsers store 的内存缓存（冷启动已在 custom 模式下预取），
+//  每次打开弹窗只读缓存、不再请求后端；需要最新列表时用右上角刷新按钮。
 import { computed, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { t } from '@/i18n'
-import { api, type AppUserInfo, type UserSpec } from '@/serverapi'
+import type { UserSpec } from '@/serverapi'
+import { useAppUsersStore } from '@/stores/appUsers'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{
@@ -16,11 +20,8 @@ const emit = defineEmits<{
 }>()
 
 const open = ref(props.visible)
-const apps = ref<AppUserInfo[]>([])
-// 应用家目录模板（后端 TERMINAL_APP_HOME_TEMPLATE），用于提示该会话的 HOME
-const homeTemplate = ref('')
-const loading = ref(false)
-const loadError = ref('')
+const appUsers = useAppUsersStore()
+const { apps, homeTemplate, loading, loadError } = storeToRefs(appUsers)
 
 function homeOf(name: string): string {
   return homeTemplate.value ? homeTemplate.value.replace('%s', name) : ''
@@ -42,20 +43,9 @@ const filteredApps = computed(() => {
   )
 })
 
-async function loadApps() {
-  loading.value = true
-  loadError.value = ''
-  try {
-    const res = await api.appUsers()
-    apps.value = res.apps || []
-    homeTemplate.value = res.homeTemplate || ''
-  } catch (e) {
-    apps.value = []
-    loadError.value = e instanceof Error ? e.message : String(e)
-    console.warn('load app users error:', e)
-  } finally {
-    loading.value = false
-  }
+// 手动刷新：安装/卸载应用后取最新列表（store 的 load 会覆盖缓存）
+function refreshApps() {
+  void appUsers.load()
 }
 
 watch(
@@ -64,7 +54,9 @@ watch(
     open.value = v
     if (v) {
       filter.value = ''
-      loadApps() // 每次打开都刷新：安装/卸载应用后列表即时生效（后端侧有短缓存）
+      // 只读缓存：冷启动（custom 模式）已预取，正常不会发请求；
+      // 仅当启动时是其他模式、之后切到 custom（缓存为空）时才请求一次。
+      void appUsers.ensureLoaded()
     }
   }
 )
@@ -109,12 +101,40 @@ function pickApp(name: string) {
             </button>
           </div>
 
-          <!-- 应用用户 -->
+          <!-- 应用用户：数量 / 刷新（缓存过期时手动取最新） -->
           <div class="mt-4 flex items-center justify-between shrink-0">
             <span class="text-xs font-medium text-ink-soft dark:text-ink-soft-dark">
               {{ t('user_pick_apps') }}
             </span>
-            <span v-if="!loading && !loadError" class="text-xs text-ink-faint">{{ apps.length }}</span>
+            <div class="flex items-center gap-1">
+              <span
+                v-if="loadError"
+                class="text-xs text-danger truncate max-w-[9rem]"
+                :title="loadError"
+                >{{ t('user_pick_apps_failed') }}</span
+              >
+              <span v-else-if="!loading" class="text-xs text-ink-faint">{{ apps.length }}</span>
+              <button
+                class="g-btn-ghost !px-1 !h-6"
+                :title="t('user_pick_refresh')"
+                :disabled="loading"
+                @click="refreshApps"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="w-3.5 h-3.5"
+                  :class="loading ? 'animate-spin' : ''"
+                >
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                  <path d="M21 3v5h-5" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <input
@@ -125,11 +145,15 @@ function pickApp(name: string) {
           />
 
           <div class="mt-2 flex-1 min-h-0 overflow-y-auto -mr-1 pr-1">
-            <p v-if="loading" class="py-3 text-center text-xs text-ink-soft dark:text-ink-soft-dark">
+            <!-- 刷新失败但缓存仍在时不覆盖列表，错误只在标题行提示 -->
+            <p
+              v-if="loading && apps.length === 0"
+              class="py-3 text-center text-xs text-ink-soft dark:text-ink-soft-dark"
+            >
               {{ t('loading') }}
             </p>
             <p
-              v-else-if="loadError"
+              v-else-if="loadError && apps.length === 0"
               class="py-3 text-center text-xs text-danger break-words"
             >
               {{ t('user_pick_apps_failed') }}<br />{{ loadError }}

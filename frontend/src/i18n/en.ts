@@ -93,6 +93,7 @@ export const en: Record<string, string> = {
   user_pick_apps_empty: 'No app users available',
   user_pick_apps_failed: 'Failed to load app list',
   user_pick_filter: 'Filter apps',
+  user_pick_refresh: 'Refresh app list',
   user_pick_app_home: 'Home:',
   settings_user_mode_hint: 'Choose which user new terminal sessions run as; existing sessions keep their user.',
   settings_confirm_root_title: 'Switch to ROOT',

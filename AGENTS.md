@@ -68,7 +68,8 @@
 
 - **强制 Composition API + `<script setup>` + TypeScript**。
 - `App.vue` — 壳：TabBar + 终端面板区（标签用 `visibility` 隐藏以保持尺寸/WS 存活）+
-  各弹窗（快捷指令 / 设置 / 确认）；启动顺序：`loadInfo` + `loadUserMode` → `restore`。
+  各弹窗（快捷指令 / 设置 / 确认）；启动顺序：`loadInfo` + `loadUserMode` →
+  （custom 模式预取一次应用用户列表，见第 5 节「应用用户列表缓存」）→ `restore`。
 - `TabBar.vue` — 顶栏：新建（常驻左侧）、标签条（拖拽/滚轮横滚、双击重命名、常驻
   关闭按钮）、桌面功能名（`labelsOn` 控制显示；《》手动折叠/展开 + 溢出自动收起）、
   移动端第二行功能键；custom 模式新建前弹 `UserPickDialog`。
@@ -97,7 +98,8 @@
   不用 `100dvh` 的原因见第 5 节「虚拟键盘适配」。
 - `stores/` — `sessions`（标签 + userSpec + 恢复/关闭）、`settings`（用户模式 + 字号，
   字号存 localStorage）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
-  顶栏按钮通过激活 uid 解析，避免后台标签覆盖）。
+  顶栏按钮通过激活 uid 解析，避免后台标签覆盖）、`appUsers`（应用用户列表**内存缓存**，
+  仅 custom 模式冷启动预取一次，见第 5 节「应用用户列表缓存」）。
 - `serverapi/index.ts` — `runtimeBase()` / `wsUrl(id?, user?)` / `api.*`。
 - `i18n/zh.ts` `en.ts` — 文案集中管理；`composables/useTheme.ts` `useI18n.ts`。
 
@@ -244,6 +246,15 @@
   不要直接把 `os.Environ()` 追加到末尾。
 - **部分应用没有同名系统用户**（如 `Nvidia-Driver-580`、`fnpackup`、`trim.media`），
   无法 setuid，已在 `/api/apps` 列表中被过滤掉——不要"修好"成显示出来。
+- **应用用户列表缓存（不要改回「每次打开弹窗都请求」）**：`stores/appUsers.ts` 把
+  `/api/apps` 结果（`apps` + `homeTemplate`）缓存在**内存**里——仅 custom 模式冷启动时
+  由 `App.onMounted` 调一次 `load()`（其他模式不加载），`UserPickDialog` 每次打开只走
+  `ensureLoaded()`（有缓存即返回，正常不发请求；启动后从其他模式切到 custom 才按需请求
+  一次），需要最新列表由弹窗的刷新按钮触发 `load()`。缓存**不落 localStorage**，所以
+  「每次前端冷启动都重新拉取一遍」是天然结果；加载失败不置 `loaded`（避免用空列表假装
+  加载成功），下次打开自动重试。`load()` 用 inflight promise 做并发去重：冷启动预取与
+  弹窗首次打开同时触发也只有一次请求。刷新失败时保留旧列表（只在标题行提示错误），
+  不要把 `apps` 清空。
 - **外部部署行为**：本仓库构建产物可能被外部部署机制移动/重启
   （如 `/vol1/@appcenter/Terminal/bin/terminal`），工作区二进制消失/更新属外部流程，
   不要误判为构建失败。

@@ -93,6 +93,7 @@ export const zh: Record<string, string> = {
   user_pick_apps_empty: '没有可用的应用用户',
   user_pick_apps_failed: '加载应用列表失败',
   user_pick_filter: '筛选应用',
+  user_pick_refresh: '刷新应用列表',
   user_pick_app_home: '家目录：',
   settings_user_mode_hint: '新建终端会话时以哪个用户运行；已存在的会话保持原用户。',
   settings_confirm_root_title: '切换到 ROOT 用户',

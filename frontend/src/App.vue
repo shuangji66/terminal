@@ -15,6 +15,7 @@ import { useQuickCmdsStore } from '@/stores/quickCmds'
 import { useToastStore } from '@/stores/toast'
 import { usePaneControlsStore } from '@/stores/paneControls'
 import { useSettingsStore } from '@/stores/settings'
+import { useAppUsersStore } from '@/stores/appUsers'
 import type { QuickCmd } from '@/serverapi'
 
 useTheme() // 初始化 / 跟随系统主题
@@ -26,6 +27,7 @@ const qc = useQuickCmdsStore()
 const toast = useToastStore()
 const pc = usePaneControlsStore()
 const settings = useSettingsStore()
+const appUsers = useAppUsersStore()
 
 // 激活标签对应的终端控制（复制/粘贴/清屏/重连/发送/连接状态）
 const activeControls = computed(() => pc.get(store.activeUid))
@@ -37,6 +39,12 @@ onMounted(async () => {
   // 先加载运行信息与持久化的启动用户模式，再恢复会话——
   // 无会话可恢复时新建的标签按默认用户建立会话（custom 模式固定为登录用户）。
   await Promise.all([store.loadInfo(), settings.loadUserMode()])
+  // 自定义启动用户模式：冷启动预取一次应用用户列表，之后新建终端的选择弹窗直接读缓存。
+  // 缓存只存在内存里（不落 localStorage），因此每次冷启动都是空缓存 → 天然重新拉取一遍；
+  // 其余模式（nas / root）不加载。这里不 await：预取只为加速弹窗，不应拖慢会话恢复。
+  if (settings.userMode === 'custom') {
+    void appUsers.load()
+  }
   const n = await store.restore(settings.userMode === 'root' ? 'root' : 'nas')
   if (n > 0) {
     toast.show(t('restore_done', { n }), 'success')
