@@ -585,6 +585,88 @@ function recordSent(data: string) {
   recentSent.push(data)
   if (recentSent.length > 64) recentSent.shift()
 }
+
+// ---------- 组合提交去重（桌面端 xterm 会把同一次提交投递两遍） ----------
+// 现象：**桌面端**用输入法提交中文时，PTY 收到两份，如敲「加油」得到「加油加油」；移动端无此问题。
+// 成因（xterm 6.0.0 的既有缺陷，非本项目引入）：一次组合提交在 xterm 内部有两条投递路线——
+//   ① 提交文本随 `input`(inputType=insertText) 或 `keypress` 事件立即投递
+//      （CoreBrowserTerminal._inputEvent / _keyPress 各有一条 triggerDataEvent），
+//   ② compositionend 之后 setTimeout(0) 再读 <textarea> 补投一次
+//      （CompositionHelper._finalizeComposition 的 waitForPropagation 分支），
+//      两条路线互不知情，于是同一段文本发两遍。上游同类报告：xtermjs/xterm.js
+//      #3191 / #5023 / #6045 / #6049 / #6060 / #6078（6.0.0 与 master 均未修）。
+// 移动端为什么不复现：软键盘输入法只走 composition 路径提交（候选字不另经 input/keypress
+// 路线投递），故只有一条路线。
+// 处理：compositionend 时记下本次提交文本，随后一个小窗口内把「同一段提交文本的重复投递」
+// 丢掉；窗口内的其它内容（提交后立刻键入的下一个字符等）原样放行，新的 compositionstart
+// 立即复位窗口（连续提交同一个词不会被误杀）。
+// 分片（逐字）重投的判定窗口收紧到 50ms——真实的重复投递发生在同一拍（<5ms），而人手
+// 连打两次同一次击键间隔远大于 50ms；整段文本一致的重投才用 200ms 窗口（人手不可能一次
+// 事件投递整段文本）。
+type CommitGuard = {
+  text: string // 本次提交文本
+  buffer: string // 窗口内已放行的内容（拼接）
+  dupTail: string // 正在丢弃的重复分片（应对 keypress 路线逐字重投）
+  deliveredAt: number // 提交文本完整投递的时刻（dupTail 判定用它算窗口）
+  until: number
+}
+const COMMIT_DEDUPE_MS = 200 // 整段重复投递的去重窗口
+const COMMIT_DUP_PARTIAL_MS = 50 // 分片重复投递的去重窗口
+let commitGuard: CommitGuard | null = null
+
+function armCommitGuard(text: string) {
+  commitGuard = text
+    ? { text, buffer: '', dupTail: '', deliveredAt: 0, until: Date.now() + COMMIT_DEDUPE_MS }
+    : null
+}
+
+// 是否属于「同一次组合提交的重复投递」——是则调用方应丢弃这次发送。
+function isDuplicateCommitChunk(data: string): boolean {
+  const g = commitGuard
+  if (!g || !data) return false
+  if (Date.now() > g.until) {
+    commitGuard = null
+    return false
+  }
+  // 已在丢弃某个重复分片：按提交文本的顺序继续丢（'加' 之后跟 '油'）
+  if (g.dupTail) {
+    if (g.text.startsWith(g.dupTail + data)) {
+      g.dupTail += data
+      if (g.dupTail === g.text) g.dupTail = ''
+      return true
+    }
+    g.dupTail = ''
+  }
+  // 提交文本已完整投递过：
+  //   整段重投 → 丢；
+  //   按前缀逐字重投（keypress 路线）→ 仅在紧随投递的一拍内丢（收紧窗口，避免误杀手打）
+  if (g.buffer.indexOf(g.text) >= 0) {
+    if (data === g.text) return true
+    if (
+      g.text.startsWith(data) &&
+      g.deliveredAt > 0 &&
+      Date.now() - g.deliveredAt <= COMMIT_DUP_PARTIAL_MS
+    ) {
+      g.dupTail = data
+      return true
+    }
+    return false
+  }
+  g.buffer += data
+  if (g.buffer.indexOf(g.text) >= 0) g.deliveredAt = Date.now()
+  return false
+}
+
+// 组合提交路径的统一发送入口（其余路径如粘贴/快捷指令/辅助键仍直接 sock.send，
+// 避免把去重窗口扩散到用户主动发送的内容上）。
+function sendPty(data: string): boolean {
+  if (!sock || sock.readyState !== WebSocket.OPEN) return false
+  if (isDuplicateCommitChunk(data)) return false
+  sock.send(data)
+  recordSent(data)
+  return true
+}
+
 // 选区自动复制的去重/节流标记。放在组件作用域是为了让长按选词能重置去重，
 // 否则「对同一个单词长按第二次」会被当成重复文本而既不复制也不提示。
 let lastAutoCopied = ''
@@ -816,6 +898,10 @@ function focusTerm() {
 //
 // 因此兜底**只覆盖 composition 路径**，绝不介入 insertText/keydown —— 那些路径 xterm 本来
 // 就正常，介入只会造成重复发送（这一点已在实现中踩过：范围放宽后英文变成双份）。
+//
+// 兜底的判据与「桌面端重复投递去重」见上「组合提交去重」：桌面端同一次提交会被 xterm 投递
+// 两遍，靠那里的 commitGuard 丢掉多出来的一份；这里只负责 iOS 那种「一条路线都没发出」的补发，
+// 判重按窗口内发送内容的**拼接**比对（桌面端 keypress 路线可能逐字投递，逐条比对会漏判）。
 function installImeFallback() {
   const textarea = el.value?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
   if (!textarea) return
@@ -824,26 +910,37 @@ function installImeFallback() {
   // 50ms 足以让它落地，又远短于人眼可感的延迟。
   const FLUSH_DELAY_MS = 50
 
-  let candidate = '' // 最近一次 compositionupdate 的候选文本（提交后唯一可靠的来源）
+  let candidate = '' // 最近一次 compositionupdate 的候选文本（iOS 提交后唯一可靠的来源）
 
   const onStart = () => {
     candidate = ''
+    // 新的组合开始 → 上一次提交的去重窗口立即失效（连续提交同一个词不算重复）
+    commitGuard = null
   }
   const onUpdate = (e: CompositionEvent) => {
     if (e.data) candidate = e.data
   }
-  const onEnd = () => {
-    const text = candidate
+  const onEnd = (e: CompositionEvent) => {
+    // compositionend.data 是浏览器给出的「权威提交文本」，但它并非所有平台都可用
+    // ——iOS 第三方键盘上常为空串（见上），此时退回 compositionupdate 的候选文本。
+    // 两者的取舍很关键：桌面端某些输入法的最后一次 compositionupdate 携带的是**拼音**
+    // 预编辑串（如 "jiayou"），提交文本只在 compositionend.data 里，若把它当作提交文本
+    // 去补发，就会在正确的中文后面多出一串拼音。
+    const endData = e.data || ''
+    const text = endData || candidate
+    const candidates = endData && candidate && endData !== candidate ? [endData, candidate] : [text]
     candidate = ''
+    // 布防：桌面端 xterm 会把同一次提交投递两遍，重复的那一份在 term.onData 里丢掉
+    armCommitGuard(text)
     if (!text) return
-    // 判据：xterm 在这段时间内是否已发出包含该文本的数据（它正常时会自行发出）。
-    // 用内容比对而非计数，避免相邻输入互相干扰。
+    // 判据：xterm 在这段时间内是否已把提交文本发出去（它正常时会自行发出）。
+    // 必须把窗口内的发送**拼接**后再比对：桌面端的 keypress 路线可能逐字投递（'加'、'油'），
+    // 逐条 includes 会漏判成「没发过」，于是整段再补发一次 → 重复。
     const mark = recentSent.length
     setTimeout(() => {
-      if (recentSent.slice(mark).some((d) => d.indexOf(text) >= 0)) return // xterm 已发出
-      if (!sock || sock.readyState !== WebSocket.OPEN) return
-      sock.send(text)
-      recordSent(text)
+      const joined = recentSent.slice(mark).join('')
+      if (candidates.some((t) => joined.indexOf(t) >= 0)) return // xterm 已发出
+      sendPty(text)
     }, FLUSH_DELAY_MS)
   }
 
@@ -1010,8 +1107,9 @@ function initTerminal() {
     } else if (altPressed.value && data.length === 1) {
       toSend = '\x1b' + data
     }
-    sock.send(toSend)
-    recordSent(toSend) // 供 iOS 第三方输入法兜底判断「xterm 是否已自行发出」
+    // 桌面端同一次组合提交会被 xterm 投递两遍（input/keypress 路线 + compositionend 延迟
+    // finalize），第二份在这里丢掉；其余输入不受影响（见上「组合提交去重」）。
+    sendPty(toSend) // 供 iOS 第三方输入法兜底判断「xterm 是否已自行发出」
     // 修饰键输入一次后自动解除：点击修饰键 → 键入任意按键 → 修饰键复位
     if (hadModifier) {
       ctrlPressed.value = false
@@ -1044,6 +1142,8 @@ function initTerminal() {
   // 修法：在 compositionupdate 阶段记下候选文本（那是唯一可靠的来源），
   // compositionend 时若发现 xterm 没有把它发出去，就补发一次。
   // 只补发「未发出」的内容，因此对原生输入法（xterm 正常发送）不会造成重复。
+  // 判重口径在 2026-09 修正为「窗口内发送内容的拼接」并优先采用 compositionend.data，
+  // 桌面端同一次提交的重复投递由「组合提交去重」的 commitGuard 处理（见上）。
   // 安装点见 openAndFit（必须等 term.open() 建出 .xterm-helper-textarea）。
 
   // 桌面端鼠标框选 / 移动端长按选词后，自动把选中文本复制进剪贴板并 toast 提示。

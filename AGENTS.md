@@ -198,6 +198,25 @@
   8) **beta 的 IME 兜底/守卫与版本无关，保留**：`installImeFallback` +
      `attachCustomKeyEventHandler` 在 6.0.0 上同样需要（合成 IME 事件实测仍复现候选字
      丢失），不要随回退一起删。
+- **桌面端中文输入重复 = xterm 把同一次组合提交投递两遍，已在组件层去重**：一次
+  composition 提交在 xterm 6.0.0 内部有两条互不知情的投递路线——① `input`(inputType=
+  insertText) / `keypress` 事件触发的 `_inputEvent` / `_keyPress`，② `compositionend`
+  之后 `setTimeout(0)` 再读 `<textarea>` 补投的 `CompositionHelper._finalizeComposition`
+  ——于是敲「加油」PTY 收到「加油加油」（上游同类：xtermjs/xterm.js #3191 / #5023 /
+  #6045 / #6049 / #6060 / #6078，6.0.0 与 master 均未修）。移动端不复现：软键盘输入法
+  只走 composition 路径提交（候选字不另经 input/keypress 路线投递）。`TerminalPane.vue`
+  的「组合提交去重」（`commitGuard` + `sendPty`）在 compositionend 后的小窗口内丢掉同一段
+  提交文本的重复投递（整段 200ms / 逐字分片 50ms，`compositionstart` 复位）。改这段代码
+  时注意三条：① `term.onData` 的发送必须走 `sendPty`（粘贴/快捷指令/辅助键仍直接
+  `sock.send`，不受去重窗口影响）；② `installImeFallback` 的判重必须比对**窗口内发送内容的
+  拼接**（`recentSent.slice(mark).join('')`），桌面端 keypress 路线会逐字投递（'加'、'油'），
+  逐条 `includes` 会漏判成「没发过」而整段补发；③ 补发文本**优先取 `compositionend.data`**：
+  某些桌面输入法最后一次 `compositionupdate` 携带的是拼音预编辑串（"jiayou"），把它当提交
+  文本会往 PTY 里塞拼音（iOS 第三方键盘 `compositionend.data` 常为空串，才回退到
+  compositionupdate）。复现/验证方式：让真实前端（vite dev 或后端产物）对接假 WS sink，在
+  `.xterm-helper-textarea` 上派发合成事件序列并读回 `send()` 的内容（本次排查脚本临时放在
+  `/tmp/imerepro/harness.mjs`，未入库）；沙箱里 `/dev/ptmx` 不可用，PTY 建不起来，端到端
+  只能验到 API 层。
 - **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07` 均为前后端约定的 OSC 控制序列。
 - **标签恢复的时序**：`App.onMounted` 先 `loadUserMode` 再 `restore`，保证无会话时
@@ -275,15 +294,17 @@
      - 兜底 `installImeFallback` **只能覆盖 composition 路径，不要放宽**：搜狗/百度/微信键盘等
        提交候选字后会**立即清空**隐藏 textarea，而 xterm 的 `CompositionHelper._finalizeComposition`
        是「`compositionend` 后用 `setTimeout(0)` 再读 `textarea.value.substring(...)`」，此时读到
-       空串 → 中文候选字**永远发不出去**。`installImeFallback` 用 `compositionupdate.data`
-       （`compositionend.data` 在 iOS 上常为空串）作为候选文本，在 `compositionend` 后延时检查
-       「xterm 这段时间内是否已发出包含该文本的数据」，只有没发过才补发。
+       空串 → 中文候选字**永远发不出去**。`installImeFallback` 优先用 `compositionend.data`
+       作为提交文本（**桌面端某些输入法最后一次 `compositionupdate` 携带的是拼音预编辑串**，
+       拿它补发会把拼音塞进 PTY），`compositionend.data` 为空串时（iOS 第三方键盘的常态）
+       才回退到 `compositionupdate.data`；在 `compositionend` 后延时检查「xterm 这段时间内
+       是否已发出该文本」，只有没发过才补发。
        **实测边界（重要）**：`Input.insertText`、`keyDown/keyUp` 这些路径 xterm **本来就正常**，
        兜底一旦介入就会变成重复发送（踩过：范围放宽后英文变成双份 `["a","a"]`）。所以
        `installImeFallback` 只监听 `compositionstart/update/end` 三个事件，绝不监听
        `input`/`keydown`。两个实现约束：① 必须在 `term.open()` **之后**安装
-       （`.xterm-helper-textarea` 由 `open()` 创建）；② 判重必须比对**内容**（`recentSent`）
-       而非发送条数。
+       （`.xterm-helper-textarea` 由 `open()` 创建）；② 判重必须比对**内容**（窗口内发送内容的
+       `join('')`）而非发送条数——且必须拼接后比对，见下方「桌面端中文输入重复」条。
      - 守卫 `attachCustomKeyEventHandler`（issue #4486 的 workaround 路线，同
        microsoft/vscode#320525）：中文 IME 输入「、」「。」等标点时，第三方键盘会把该按键
        映射成**替代码**（如 `\`）发一个非 229 的 keydown；xterm 的 `CompositionHelper` 看到
