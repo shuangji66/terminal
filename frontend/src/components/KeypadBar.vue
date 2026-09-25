@@ -4,7 +4,9 @@
 //     第一行：ESC | ↑ | Tab | Ctrl | Alt | Shift | Insert（↑ 在第二位，与第二行的
 //             ← ↓ → 组成倒 T 型方向键组合；Insert 在最右）
 //     第二行：← | ↓ | → | / | - | = | " | .（`.` 放在 `"` 右侧）
-//   Shift **锁定态**（一直有效，直到再点一次 Shift 才解除）：符号键发上档字符，
+//   Shift **锁定态**（一直有效，直到再点一次 Shift 才解除）：方向键换成
+//     ←→ Home/End、↑↓ PageUp/PageDown（键面显示 HM/ED/PU/PD，序列见 SHIFT_CURSOR）；
+//   符号键发上档字符，
 //     **键面也显示上档字符**，并换成品牌色底/字表示「已上档」。映射见 SHIFT_MAP
 //     （.→<  ,→>  /→?  ;→:  "→'  [→{  ]→}  \→|  -→_  =→+  `→~）。
 //   【第二页】常见标点（两行、每行 8 个）
@@ -69,10 +71,10 @@ let repeatTimer: number | null = null
 // 点按钮切页（不做滑动）：第一页只有右侧「下一页」，第二页只有左侧「上一页」，
 // 因此天生不会循环；两页都可见的平板档不显示按钮。
 
-function startRepeat(key: string) {
+function startRepeat(name: CursorName) {
   if (repeatTimer) return
-  emit('key', key)
-  repeatTimer = window.setInterval(() => emit('key', key), 100)
+  emit('key', cursorSeq(name))
+  repeatTimer = window.setInterval(() => emit('key', cursorSeq(name)), 100)
 }
 function stopRepeat() {
   if (repeatTimer) {
@@ -124,6 +126,29 @@ const SHIFT_MAP: Record<string, string> = {
   '-': '_',
   '=': '+',
   '`': '~'
+}
+
+// 方向键：Shift 锁定时换成 Home/End/PageUp/PageDown。
+// 序列与 xterm 上真实键盘一致（Home/End 是 CSI H / CSI F，PageUp/PageDown 是 CSI 5~ / 6~），
+// 键面显示两字母缩写（HM/ED/PU/PD），面板窄也放得下。
+type CursorName = 'left' | 'up' | 'down' | 'right'
+const SHIFT_CURSOR: Record<CursorName, { label: string; seq: string }> = {
+  left: { label: 'HM', seq: '\x1b[H' }, // Home
+  up: { label: 'PU', seq: '\x1b[5~' }, // PageUp
+  down: { label: 'PD', seq: '\x1b[6~' }, // PageDown
+  right: { label: 'ED', seq: '\x1b[F' } // End
+}
+// 方向键的基础字形（同时作为 data-key，便于脚本按基础键定位；上档后字会变）
+function cursorGlyph(name: CursorName): string {
+  return { left: '←', up: '↑', down: '↓', right: '→' }[name]
+}
+// 方向键要发出的序列：Shift 锁定时发上档序列（长按连发同样跟着变）
+function cursorSeq(name: CursorName): string {
+  return props.shift ? SHIFT_CURSOR[name].seq : K[name]
+}
+// 方向键键面：Shift 锁定时显示缩写
+function cursorLabel(name: CursorName): string {
+  return props.shift ? SHIFT_CURSOR[name].label : cursorGlyph(name)
 }
 
 // 符号键发送：Shift 锁定且该键有上档映射时发上档字符，否则原样。
@@ -186,18 +211,19 @@ const navCls =
           >
             ESC
           </button>
-          <!-- ↑ 方向键：长按连发 -->
+          <!-- ↑ 方向键：长按连发；Shift 锁定时变 PageUp（PU） -->
           <button
             class="rounded-full"
-            :class="keyCls"
-            @mousedown="startRepeat(K.up)"
+            :data-key="cursorGlyph('up')"
+            :class="[keyCls, shift ? upShiftCls : '']"
+            @mousedown="startRepeat('up')"
             @mouseup="stopRepeat"
             @mouseleave="stopRepeat"
-            @touchstart.prevent="startRepeat(K.up)"
+            @touchstart.prevent="startRepeat('up')"
             @touchend="stopRepeat"
             @touchcancel="stopRepeat"
           >
-            ↑
+            {{ cursorLabel('up') }}
           </button>
           <!-- Tab -->
           <button class="rounded-full" :class="keyCls" @click="send(K.tab)" @touchstart.prevent="send(K.tab)">Tab</button>
@@ -239,9 +265,10 @@ const navCls =
 
         <!-- 第二行：← | ↓ | →（倒 T 下方三键）+ 常用符号 -->
         <div class="flex items-center justify-around gap-1 flex-wrap">
-          <button class="rounded-full" :class="keyCls" @mousedown="startRepeat(K.left)" @mouseup="stopRepeat" @mouseleave="stopRepeat" @touchstart.prevent="startRepeat(K.left)" @touchend="stopRepeat" @touchcancel="stopRepeat">←</button>
-          <button class="rounded-full" :class="keyCls" @mousedown="startRepeat(K.down)" @mouseup="stopRepeat" @mouseleave="stopRepeat" @touchstart.prevent="startRepeat(K.down)" @touchend="stopRepeat" @touchcancel="stopRepeat">↓</button>
-          <button class="rounded-full" :class="keyCls" @mousedown="startRepeat(K.right)" @mouseup="stopRepeat" @mouseleave="stopRepeat" @touchstart.prevent="startRepeat(K.right)" @touchend="stopRepeat" @touchcancel="stopRepeat">→</button>
+          <!-- ← ↓ →：Shift 锁定时分别变 Home(HM) / PageDown(PD) / End(ED) -->
+          <button class="rounded-full" :data-key="cursorGlyph('left')" :class="[keyCls, shift ? upShiftCls : '']" @mousedown="startRepeat('left')" @mouseup="stopRepeat" @mouseleave="stopRepeat" @touchstart.prevent="startRepeat('left')" @touchend="stopRepeat" @touchcancel="stopRepeat">{{ cursorLabel('left') }}</button>
+          <button class="rounded-full" :data-key="cursorGlyph('down')" :class="[keyCls, shift ? upShiftCls : '']" @mousedown="startRepeat('down')" @mouseup="stopRepeat" @mouseleave="stopRepeat" @touchstart.prevent="startRepeat('down')" @touchend="stopRepeat" @touchcancel="stopRepeat">{{ cursorLabel('down') }}</button>
+          <button class="rounded-full" :data-key="cursorGlyph('right')" :class="[keyCls, shift ? upShiftCls : '']" @mousedown="startRepeat('right')" @mouseup="stopRepeat" @mouseleave="stopRepeat" @touchstart.prevent="startRepeat('right')" @touchend="stopRepeat" @touchcancel="stopRepeat">{{ cursorLabel('right') }}</button>
           <!-- 常用符号（Shift 锁定时发上档字符并变色）：@click + @touchstart.prevent 双保险 -->
           <button class="rounded-full" :data-key="SYM_SLASH" :class="[keyCls, isUpshifted(SYM_SLASH) ? upShiftCls : '']" @click="sendSym(SYM_SLASH)" @touchstart.prevent="sendSym(SYM_SLASH)">{{ label(SYM_SLASH) }}</button>
           <button class="rounded-full" :data-key="SYM_DASH" :class="[keyCls, isUpshifted(SYM_DASH) ? upShiftCls : '']" @click="sendSym(SYM_DASH)" @touchstart.prevent="sendSym(SYM_DASH)">{{ label(SYM_DASH) }}</button>
