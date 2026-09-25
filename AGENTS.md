@@ -107,8 +107,8 @@
 - `stores/` — `sessions`（标签 + userSpec + userLabel + 恢复/关闭；默认标题为
   `终端N:<用户>`，见第 5 节「标签上的用户标注」）、`settings`（仅终端字号，
   存 localStorage）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
-  顶栏按钮通过激活 uid 解析，避免后台标签覆盖）、`appUsers`（应用用户列表**内存缓存**，
-  冷启动预取一次，见第 5 节「应用用户列表缓存」）。
+  顶栏按钮通过激活 uid 解析，避免后台标签覆盖）、`appUsers`（应用用户列表**内存缓存** +
+  **浏览器本地的置顶名单**，冷启动预取一次，见第 5 节「应用用户列表缓存」）。
 - `serverapi/index.ts` — `runtimeBase()` / `wsUrl(id?, user?)` / `api.*`。
 - `i18n/zh.ts` `en.ts` — 文案集中管理；`composables/useTheme.ts` `useI18n.ts`。
 
@@ -132,7 +132,7 @@
    “解挂载”，会话继续运行并写历史文件。
 5. **清屏必须同步**：前端 `term.clear()` 同时调用 `/api/session/clear` 截断历史文件。
 6. **前端状态**：优先 Composition API；共享状态进 Pinia；可复用逻辑进 composables；
-   i18n / 主题 / 字号只存 localStorage（字号不持久化到后端）。
+   i18n / 主题 / 字号 / **应用置顶名单**只存 localStorage（都不持久化到后端）。
 7. **v-model 禁止绑定表达式**：如 `v-model:visible="x !== null"` 会编译报错，
    改用 `:visible` + `@update:visible`。
 8. **中文注释习惯**：现有代码中文注释为主，新注释保持项目风格。
@@ -313,7 +313,15 @@
   `App.onMounted` 调一次 `load()`（新建终端一律弹选人窗，故不再有条件），
   `UserPickDialog` 每次打开只走
   `ensureLoaded()`（有缓存即返回，正常不发请求；仅当启动预取失败、缓存为空时才补一次），
-  需要最新列表由弹窗的刷新按钮触发 `load()`。缓存**不落 localStorage**，所以
+  需要最新列表由弹窗的刷新按钮触发 `load()`。应用**置顶名单**（`pinned`）反过来只落
+  localStorage（`terminal-pinned-apps`，数组顺序 = 置顶先后，先置顶的排更上面；取消置顶即
+  回到后端原顺序），**不落后端**、也不随 `load()` 清理（`/api/apps` 失败回空列表时清理会把
+  用户置顶全抹掉）。列表排序一律走 `orderByPin()`（返回新数组，不改 store 里的 `apps`）。
+  置顶按钮**在应用条目卡片内部右侧**（卡片是 div：外层承载边框/hover，里面放「选中」与
+  「置顶」两个 button——button 不能嵌套），只有图标、无文字。应用列表的滚动容器必须留
+  `pr-3`（配 `-mr-3` 保持条目宽度）：iOS/Android 的滚动条是**浮层**（不占内容宽度），
+  留白不足会直接压在条目右边框与置顶按钮上（实测 4px 时 30 条全被压住，12px 时 0 条）。
+  缓存**不落 localStorage**，所以
   「每次前端冷启动都重新拉取一遍」是天然结果；加载失败不置 `loaded`（避免用空列表假装
   加载成功），下次打开自动重试。`load()` 用 inflight promise 做并发去重：冷启动预取与
   弹窗首次打开同时触发也只有一次请求。刷新失败时保留旧列表（只在标题行提示错误），

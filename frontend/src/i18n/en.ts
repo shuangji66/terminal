@@ -99,6 +99,8 @@ export const en: Record<string, string> = {
   user_pick_apps_failed: 'Failed to load app list',
   user_pick_filter: 'Filter apps',
   user_pick_refresh: 'Refresh app list',
+  user_pick_pin: 'Pin to top',
+  user_pick_unpin: 'Unpin',
   user_pick_app_home: 'Home:',
 
   // About

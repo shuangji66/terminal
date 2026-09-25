@@ -99,6 +99,8 @@ export const zh: Record<string, string> = {
   user_pick_apps_failed: '加载应用列表失败',
   user_pick_filter: '筛选应用',
   user_pick_refresh: '刷新应用列表',
+  user_pick_pin: '置顶',
+  user_pick_unpin: '取消置顶',
   user_pick_app_home: '家目录：',
 
   // 关于

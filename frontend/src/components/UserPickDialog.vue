@@ -8,6 +8,8 @@
 //  列表来自 appUsers store 的内存缓存（冷启动已预取），每次打开弹窗只读缓存、
 //  不再请求后端；需要最新列表时用右上角刷新按钮。
 //  关闭方式（× 按钮 / 点弹窗外侧）只关弹窗、不新建会话；ROOT 需二次确认。
+//  应用条目右侧有置顶开关：置顶的先排在上面（先置顶的更靠上），取消置顶回到原位；
+//  置顶名单只存在浏览器 localStorage（appUsers store 的 pinned），不落后端。
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { t } from '@/i18n'
@@ -40,16 +42,23 @@ function appHint(name: string): string {
   return dir ? `${t('user_pick_app_home')} ${dir}` : ''
 }
 
-// 应用名过滤（列表可能上百条，弹窗内直接筛选）；派生值用 computed，不额外维护状态
+// 应用名过滤（列表可能上百条，弹窗内直接筛选）+ 置顶排序；派生值用 computed，不额外维护状态
 const filter = ref('')
 const filteredApps = computed(() => {
   const kw = filter.value.trim().toLowerCase()
-  if (!kw) return apps.value
-  return apps.value.filter(
-    (a) =>
-      a.name.toLowerCase().includes(kw) || (a.displayName || '').toLowerCase().includes(kw)
-  )
+  const list = kw
+    ? apps.value.filter(
+        (a) =>
+          a.name.toLowerCase().includes(kw) || (a.displayName || '').toLowerCase().includes(kw)
+      )
+    : apps.value
+  return appUsers.orderByPin(list)
 })
+
+// 置顶开关（仅浏览器本地缓存，见 appUsers store）
+function togglePin(name: string) {
+  appUsers.togglePin(name)
+}
 
 // 手动刷新：安装/卸载应用后取最新列表（store 的 load 会覆盖缓存）
 function refreshApps() {
@@ -169,7 +178,10 @@ function confirmPickRoot() {
               :placeholder="t('user_pick_filter')"
             />
 
-            <div class="mt-2 flex-1 min-h-0 overflow-y-auto -mr-1 pr-1">
+            <!-- 滚动容器右侧留出 ≥12px 给滚动条：iOS/Android 的滚动条是**浮层**（不占内容宽度），
+                 不留白就会压在应用条目的右边框与置顶按钮上；桌面经典滚动条虽占宽度，
+                 但同样需要这段间距做视觉分隔。-mr-3 抵消 pr-3，条目右边缘仍与面板内容区对齐。 -->
+            <div class="mt-2 flex-1 min-h-0 overflow-y-auto -mr-3 pr-3">
               <!-- 刷新失败但缓存仍在时不覆盖列表，错误只在标题行提示 -->
               <p
                 v-if="loading && apps.length === 0"
@@ -190,18 +202,46 @@ function confirmPickRoot() {
                 {{ t('user_pick_apps_empty') }}
               </p>
               <div v-else class="grid grid-cols-1 gap-1.5">
-                <button
+                <!-- 边框/hover 由外层卡片承载，置顶按钮**在卡片内部右侧**（button 不能嵌套，
+                     故卡片是 div、里面放「选中」与「置顶」两个 button）。 -->
+                <div
                   v-for="a in filteredApps"
                   :key="a.name"
-                  class="rounded-md border px-3 py-2 text-left text-sm transition-colors border-line dark:border-line-dark text-ink dark:text-ink-dark hover:border-brand hover:bg-brand/5"
-                  :title="appHint(a.name)"
-                  @click="pickApp(a.name)"
+                  class="flex items-center rounded-md border border-line dark:border-line-dark overflow-hidden transition-colors hover:border-brand hover:bg-brand/5"
                 >
-                  <span class="block truncate font-medium">{{ a.name }}</span>
-                  <span v-if="a.displayName" class="block truncate text-xs text-ink-soft dark:text-ink-soft-dark">
-                    {{ a.displayName }}
-                  </span>
-                </button>
+                  <button
+                    class="flex-1 min-w-0 px-3 py-2 text-left text-sm text-ink dark:text-ink-dark"
+                    :title="appHint(a.name)"
+                    @click="pickApp(a.name)"
+                  >
+                    <span class="block truncate font-medium">{{ a.name }}</span>
+                    <span v-if="a.displayName" class="block truncate text-xs text-ink-soft dark:text-ink-soft-dark">
+                      {{ a.displayName }}
+                    </span>
+                  </button>
+                  <!-- 置顶/取消置顶：只有图标（不占宽），已置顶时实心高亮 -->
+                  <button
+                    class="shrink-0 mr-1.5 g-btn-ghost !h-7 !px-1.5 !gap-0"
+                    :class="appUsers.isPinned(a.name) ? 'text-brand' : ''"
+                    :title="appUsers.isPinned(a.name) ? t('user_pick_unpin') : t('user_pick_pin')"
+                    :aria-label="appUsers.isPinned(a.name) ? t('user_pick_unpin') : t('user_pick_pin')"
+                    :aria-pressed="appUsers.isPinned(a.name)"
+                    @click="togglePin(a.name)"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      :fill="appUsers.isPinned(a.name) ? 'currentColor' : 'none'"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      class="w-3.5 h-3.5"
+                    >
+                      <path d="M12 17v5" />
+                      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
