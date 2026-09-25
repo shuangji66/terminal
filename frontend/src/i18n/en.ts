@@ -17,6 +17,8 @@ export const en: Record<string, string> = {
   conn_exited: 'Exited',
   conn_error: 'Connection error',
   conn_closed: 'Connection closed. Reconnect or refresh to continue',
+  keypad_prev_page: 'Previous page',
+  keypad_next_page: 'Next page',
   conn_detached: 'Session opened on another device',
   conn_detached_hint: 'This session is now open on another device. Click Reconnect to continue here.',
   conn_not_found: 'Session not found',

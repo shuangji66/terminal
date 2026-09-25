@@ -93,20 +93,47 @@
   （`attachCustomKeyEventHandler`，拦替代码键，见第 5 节「xterm 锁定 6.0.0」第 8 条）；辅助功能键
   （`KeypadBar`）按键修饰符输入一次后自动解除；
   向 `paneControls` 注册命令入口（paste/clear/reconnect/search/focus/send）。
-- `KeypadBar.vue` — 移动端辅助键条（ESC/Tab/Ctrl/Alt/Shift/Ins/←↓→/符号）；
+- `KeypadBar.vue` — 移动端辅助键条（**两页**：第一页 ESC/Tab/Ctrl/Alt/Shift/Insert/←↓→/符号
+  `/-=".`（`.` 在 `"` 右侧）；
+  第二页第一行 `!@#$%^&*`，第二行依次是 , ; [ ] \ ` ( )（8 个；反引号在 `\` 与 `(` 之间））；
+  两侧的切页控件是**竖长条按钮**（`navCls`：`w-4` + `self-stretch` → 宽 16px、与两行按键
+  等高，浅底 + 圆角，带 `title`/`aria-label`），**不是纯 glyph 提示**。
+  **Shift 是上档锁定**（不是「输入一次自动解除」）：锁定时符号键发上档字符
+  （`.→<` `,→>` `/→?` `;→:` `"→'` `[→{` `]→}` `\→|` `-→_` `=→+`，见 `SHIFT_MAP`），
+  并给这些键加 `!bg-brand/15 !text-brand` 着色表示「已上档」；**键面文字也换成上档字符**
+  （`label(ch)`，与发出的字符始终一致——不要只改颜色或只改文字，两者都要），
+  一直有效到再点一次 Shift。符号键带 `data-key`（基础键，不随上档变化）：脚本/测试按它定位，
+  别按键面文字找（上档时会变）。
+  因此 `TerminalPane.vue` 里「修饰键输入一次后自动解除」**必须排除 shift**（只清 ctrl/alt）。
   显隐由 `v-if="mobileLayout"`（`useMobileLayout()`）控制，**不用 `md:hidden`**
   （iPad 宽度 ≥768px 会被宽度断点判成桌面而丢掉整条键条，见第 5 节「大屏触屏」）；
+  **切页**：`useKeypadPage()`（模块级共享的当前页，切标签不跳页）提供 `step(±1)`，
+  `step` **夹取不循环**（到边界即停）。切页**只靠点按钮**：**第一页只在右侧**显示「›」
+  （进入第二页），**第二页只在左侧**显示「‹」（回到第一页）——两侧不同时出现，因此结构上
+  不存在循环。**不要加回触摸滑动切页**（`@touchstart.prevent.stop` 要保留原样，只做阻止
+  浏览器合成鼠标/长按菜单，不再兼记录滑动起点）。
+  **平板档（`useWideLayout()`，即 md 断点 ≥768px）两页并排同时显示、无切页按钮**。
+  键码显示用完整 `Insert`（不是 `Ins`）。
   长按连发；修饰键（Ctrl/Alt/Shift）变色指示按下态，输入一次后自动解除；
   所有非长按键采用 `@click` + `@touchstart.prevent` 双保险确保移动端可靠触发；
   底部内边距用 `--kb-safe-bottom`（键盘弹起时为 0，见下条）。
+  ⚠️ 两页的按键要**各自只写一遍**（用 `v-if="wide || page === N"` 控制显隐，而不是把两套
+  模板复制到「手机档」和「平板档」两支里）；新增标点/按键时只改数据数组，别复制按钮。
+  ⚠️ 根节点的 `@touchstart.prevent.stop` 必须保留：它阻止浏览器把触摸合成为鼠标事件与
+  长按菜单（单次按键的 `@click` + `@touchstart.prevent` 双保险依赖这一点），与切页无关。
   **高度上报**：根节点带 `data-keypad-bar`，挂载时用 `syncKeypadHeight()`
   （`composables/useKeypadHeight.ts`）把自己的实测高度写进 `--keypad-h`，并用
   ResizeObserver 跟踪（键盘弹起会改 padding-bottom）；卸载后 nextTick 再同步一次
   （多实例：每个标签一个键条，先卸载的那个不能直接把变量清零）。
-- `composables/useMobileLayout.ts` — **是否按移动端（触屏）布局渲染**（当前唯一使用者是
-  `KeypadBar`）：判据 = 窄视口（<768px，保留旧行为）**或**触屏（`(hover:none) and
-  (pointer:coarse)`，另有「移动/平板 UA + `maxTouchPoints > 0`」兜底，覆盖接了触控板后
-  主指针变 `pointer: fine` 的情况）。模块级单例 ref，无生命周期钩子。
+- `composables/useKeypadPage.ts` — 辅助键条的**当前页**（0/1）与翻页 `step(±1)`；
+  `step` **夹取不循环**（到边界即停）；模块级共享，所有标签的键条同步同一页。
+- `composables/useMobileLayout.ts` — 两个布局判据：
+  **`useMobileLayout()`：是否按移动端（触屏）布局渲染**（当前唯一使用者是 `KeypadBar`）：
+  判据 = 窄视口（<768px，保留旧行为）**或**触屏（`(hover:none) and (pointer:coarse)`，
+  另有「移动/平板 UA + `maxTouchPoints > 0`」兜底，覆盖接了触控板后主指针变
+  `pointer: fine` 的情况）。**`useWideLayout()`：是否宽布局（md 断点 ≥768px）**，
+  供键条「平板档两页并排」判断（与 TabBar 桌面功能行同一条线，别另发明断点数值）。
+  两者都是模块级单例 ref + matchMedia change 监听，无生命周期钩子。
 - `composables/useKeypadHeight.ts` — **底部辅助键条高度（`--keypad-h`）**：由
   `KeypadBar.vue` 调用，取任一可见键条实例的实测高度写入 `<html>`（无键条时 0）。
   弹窗的「终端区域」要扣掉它，见第 5 节「浮层与终端区域对齐」。
@@ -376,7 +403,12 @@
   （`KeypadBar`）被 `md:hidden` 整条隐藏，触屏上再也没有 ESC/Tab/Ctrl/Alt/方向键可用。
   所以键条显隐一律走 `composables/useMobileLayout.ts`（触屏 **或** 窄视口），
   **不要写回 `md:hidden`**；TabBar 的功能行仍按 `md` 断点（iPad 上显示更全的桌面行是刻意的，
-  含移动端第二行没有的搜索）。另注意 `(hover: none) and (pointer: coarse)` 在接了鼠标/
+  含移动端第二行没有的搜索）。
+  另注意键条**每个标签一个实例**（在 TerminalPane 内，非激活面板用 `visibility:hidden` 隐藏，
+  **高度仍非 0**）：写测试/脚本判断「哪个键条可见」不能用「高度 > 0」，要用
+  `!el.closest('.invisible')`；修饰键（Ctrl/Alt/Shift）状态是**每个面板各一份**，
+  只有键条页状态是模块级共享的。
+  另注意 `(hover: none) and (pointer: coarse)` 在接了鼠标/
   触控板后会失效（WebKit/Blink 把**主**指针改报成 `pointer: fine`），故该 composable 还有
   「移动/平板 UA + `maxTouchPoints > 0`」兜底。
   验证方式（本次用的）：真实后端产物 + `socat` 把 unix socket 转 TCP + headless Chromium 的

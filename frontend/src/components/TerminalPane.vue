@@ -1184,7 +1184,7 @@ function initTerminal() {
   term.onData((data) => {
     if (!sock || sock.readyState !== WebSocket.OPEN) return
     let toSend = data
-    const hadModifier = ctrlPressed.value || altPressed.value || shiftPressed.value
+    const hadModifier = ctrlPressed.value || altPressed.value
     if (ctrlPressed.value && data.length === 1) {
       const code = data.charCodeAt(0)
       if (code >= 97 && code <= 122) toSend = String.fromCharCode(code - 96)
@@ -1195,11 +1195,12 @@ function initTerminal() {
     // 桌面端同一次组合提交会被 xterm 投递两遍（input/keypress 路线 + compositionend 延迟
     // finalize），第二份在这里丢掉；其余输入不受影响（见上「组合提交去重」）。
     sendPty(toSend) // 供 iOS 第三方输入法兜底判断「xterm 是否已自行发出」
-    // 修饰键输入一次后自动解除：点击修饰键 → 键入任意按键 → 修饰键复位
+    // 修饰键输入一次后自动解除：点击修饰键 → 键入任意按键 → 修饰键复位。
+    // **Shift 例外**：它是辅助键条的「上档锁定」，要一直有效到再点一次 Shift 才解除
+    // （见 KeypadBar 的 SHIFT_MAP），因此不参与这里的自动复位。
     if (hadModifier) {
       ctrlPressed.value = false
       altPressed.value = false
-      shiftPressed.value = false
     }
   })
 

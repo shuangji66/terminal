@@ -52,3 +52,28 @@ query?.addEventListener('change', () => {
 export function useMobileLayout(): Readonly<Ref<boolean>> {
   return readonly(isMobileLayout)
 }
+
+// ---------- 「宽布局」判定（平板档，用于键条双页并排） ----------
+//
+// 判据就是 Tailwind 的 md 断点（>=768px），与 TabBar「桌面功能行」用的是同一条线：
+// 手机竖屏 <768 → 单页 + 左右切换；平板（iPad 768/834/1024）及以上 → 两页并排同时显示。
+// 不要另发明断点数值：这里真正要问的是「宽度够不够并排摆下两页」。
+const WIDE_LAYOUT_QUERY = '(min-width: 768px)'
+
+const wideQuery =
+  typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia(WIDE_LAYOUT_QUERY)
+    : null
+
+const isWideLayout = ref(wideQuery?.matches ?? false)
+
+wideQuery?.addEventListener('change', () => {
+  isWideLayout.value = wideQuery.matches
+})
+
+/**
+ * 只读：当前是否宽布局（>=md 断点）。键条据此决定「两页并排」还是「单页 + 切换」。
+ */
+export function useWideLayout(): Readonly<Ref<boolean>> {
+  return readonly(isWideLayout)
+}
