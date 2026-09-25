@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // TabBar — 顶部标签栏：会话标签（点击激活 / 双击重命名 / ×关闭）+ 新建按钮，
 // 以及右侧的快捷指令 / 主题 / 语言入口。无侧边栏与底栏，所有导航都在顶部。
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from 'vue'
 import { t } from '@/i18n'
 import { useSessionsStore } from '@/stores/sessions'
 import { usePaneControlsStore } from '@/stores/paneControls'
@@ -128,25 +128,55 @@ function onTabClick(uid: string) {
 // 双击重命名
 const renamingUid = ref<string | null>(null)
 const renameValue = ref('')
+// 重命名输入框的模板 ref。**必须用函数式 ref**：`ref="x"` 写在 v-for 里时 Vue 会把元素
+// 收集成数组（`renameInput.value` 变成 `HTMLInputElement[]`），`?.focus()` 会抛
+// "focus is not a function" —— 输入框拿不到焦点，于是点别处也不会触发 blur，
+// 重命名就一直挂在那里（历史 bug）。
 const renameInput = ref<HTMLInputElement | null>(null)
+function setRenameInput(el: Element | ComponentPublicInstance | null) {
+  renameInput.value = el instanceof HTMLInputElement ? el : null
+}
+
+// 重命名期间在捕获阶段监听 pointerdown：点输入框以外的任何位置都结束重命名。
+// 只靠输入框的 @blur 不保险：xterm 的 mousedown 会 preventDefault（不转移焦点）等情况下
+// 根本不会有 blur，输入框就永远不消失。
+function onDocPointerDown(ev: Event) {
+  if (renamingUid.value === null) return
+  const el = renameInput.value
+  if (el && ev.target instanceof Node && el.contains(ev.target)) return
+  commitRename()
+}
 
 function startRename(uid: string) {
   const tab = store.tabs.find((tb) => tb.uid === uid)
   if (!tab) return
   renamingUid.value = uid
   renameValue.value = tab.title
+  document.addEventListener('pointerdown', onDocPointerDown, true)
   nextTick(() => {
     renameInput.value?.focus()
     renameInput.value?.select()
   })
 }
 
-function commitRename() {
-  if (renamingUid.value) {
-    store.persistTitle(renamingUid.value, renameValue.value.trim())
-  }
+// 结束重命名。commit = true 提交输入内容（空值 → 恢复默认标题，等于取消重命名）；
+// false 用于 Esc（丢弃改动）。重复调用是幂等的（blur 与 pointerdown 可能都来一次）。
+function endRename(commit: boolean) {
+  document.removeEventListener('pointerdown', onDocPointerDown, true)
+  const uid = renamingUid.value
   renamingUid.value = null
+  if (uid && commit) store.persistTitle(uid, renameValue.value.trim())
 }
+
+function commitRename() {
+  endRename(true)
+}
+
+function cancelRename() {
+  endRename(false)
+}
+
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDown, true))
 
 // 关闭标签：已有后端会话（id 非空）时二次确认；新会话可直接关闭。
 // 注意：确认弹窗的 update:visible 只负责同步弹窗显隐，真正关闭在 confirmClose 中
@@ -227,7 +257,7 @@ function titleOf(uid: string): string {
           class="flex items-center gap-1.5 pl-2.5 pr-1 h-8 rounded-md text-xs font-medium cursor-pointer transition-all duration-150 shrink-0 max-w-[220px] sm:max-w-[280px]"
           :class="
             store.activeUid === tab.uid
-              ? 'bg-brand text-white shadow-glow'
+              ? 'bg-brand text-white' // 标签底部不要阴影/辉光
               : 'text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5'
           "
           :title="t('tab_rename')"
@@ -249,13 +279,13 @@ function titleOf(uid: string): string {
           <!-- 重命名输入 / 标题 -->
           <input
             v-if="renamingUid === tab.uid"
-            ref="renameInput"
+            :ref="setRenameInput"
             v-model="renameValue"
             class="w-24 bg-transparent outline-none border-b border-current text-xs font-medium"
             :placeholder="t('tab_title_placeholder')"
             @click.stop
             @keydown.enter="commitRename"
-            @keydown.esc="renamingUid = null"
+            @keydown.esc="cancelRename"
             @blur="commitRename"
           />
           <span v-else class="truncate">{{ titleOf(tab.uid) }}</span>

@@ -365,6 +365,17 @@
   顶号协议）+ 两个浏览器上下文端到端跑「A 打开 → B 打开顶掉 A → A 不自动重连 →
   A 点重连只夺回被点的那个会话」；沙箱里 PTY 建不起来（`open /dev/ptmx: permission denied`），
   真会话只能部署后真机验证。
+- **标签重命名：模板 ref 在 `v-for` 里会变成数组 + 「点别处」不能只靠 blur**：`TabBar.vue`
+  的重命名输入框写在 `v-for` 内，`ref="renameInput"` 会被 Vue 收集成 `HTMLInputElement[]`，
+  `renameInput.value?.focus()` 于是抛 `focus is not a function`（实测控制台报
+  `O.value?.focus is not a function`、`document.activeElement === BODY`）→ **输入框拿不到焦点**，
+  接着「双击后填不填内容、点别处都不会结束重命名」（没有焦点就没有 blur）。
+  两处都别改回去：① 用**函数式 ref**（`setRenameInput(el)`，`el instanceof HTMLInputElement`
+  再赋值）；② 结束重命名不只靠 `@blur`，另有捕获阶段的 `document` `pointerdown` 监听
+  （`onDocPointerDown`：目标不在输入框内就 `commitRename()`），因为某些点击（xterm 的
+  `mousedown` 会 `preventDefault`）不会转移焦点、也就不会有 blur。统一走 `endRename(commit)`：
+  `commit=true` 提交（空值 → 恢复默认标题，即取消重命名）、`commit=false` 给 Esc 丢弃改动；
+  重复调用幂等（blur 与 pointerdown 可能都触发一次），卸载时记得移除监听。
 - **标签上的用户标注（`终端N:<用户>`）**：默认标题 = `t('tab_placeholder_user')`，用户显示名
   由 `Tab.userLabel` 提供——新建标签时用 `sessions.labelForSpec(spec)`（`root` / `app:<APP NAME>`
   取 APP NAME / `nas` 取 `/api/info` 的 `nasUser.username`），**恢复的标签用后端
