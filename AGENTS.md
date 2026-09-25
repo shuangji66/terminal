@@ -94,10 +94,17 @@
   长按连发；修饰键（Ctrl/Alt/Shift）变色指示按下态，输入一次后自动解除；
   所有非长按键采用 `@click` + `@touchstart.prevent` 双保险确保移动端可靠触发；
   底部内边距用 `--kb-safe-bottom`（键盘弹起时为 0，见下条）。
+  **高度上报**：根节点带 `data-keypad-bar`，挂载时用 `syncKeypadHeight()`
+  （`composables/useKeypadHeight.ts`）把自己的实测高度写进 `--keypad-h`，并用
+  ResizeObserver 跟踪（键盘弹起会改 padding-bottom）；卸载后 nextTick 再同步一次
+  （多实例：每个标签一个键条，先卸载的那个不能直接把变量清零）。
 - `composables/useMobileLayout.ts` — **是否按移动端（触屏）布局渲染**（当前唯一使用者是
   `KeypadBar`）：判据 = 窄视口（<768px，保留旧行为）**或**触屏（`(hover:none) and
   (pointer:coarse)`，另有「移动/平板 UA + `maxTouchPoints > 0`」兜底，覆盖接了触控板后
   主指针变 `pointer: fine` 的情况）。模块级单例 ref，无生命周期钩子。
+- `composables/useKeypadHeight.ts` — **底部辅助键条高度（`--keypad-h`）**：由
+  `KeypadBar.vue` 调用，取任一可见键条实例的实测高度写入 `<html>`（无键条时 0）。
+  弹窗的「终端区域」要扣掉它，见第 5 节「浮层与终端区域对齐」。
 - `composables/useViewportHeight.ts` — **虚拟键盘适配（App 壳层调用一次）**：监听
   `visualViewport` 的 `resize`/`scroll`，把可视视口几何写入 `<html>` 的 CSS 变量：
   `--vvh`（可视视口高度 = `.app-shell` 高度）、`--vvt`（可视视口相对布局视口的位移 =
@@ -151,13 +158,16 @@
 ## 5. 常见的坑（Gotchas）
 
 - **浮层与「终端区域」对齐（三个弹窗的尺寸依据）**：终端区域 = `.app-shell`
-  （高度 `--vvh`、顶部偏移 `--vvt`）**减去顶栏**；顶栏高度由 `useViewportHeight()`
-  **实测** `<header>` 写入 `--tabbar-h`（`onMounted` 首测 + `ResizeObserver` 跟踪，
-  断点切换/功能名折叠/旋转后自动更新）。**快捷指令 / 新建终端 / 设置三个弹窗统一用
-  style.css 的 `.term-region-center`**（定位带）：`top: calc(var(--vvt,0px) +
-  var(--tabbar-h,0px))`、`height: calc((var(--vvh,100dvh) - var(--tabbar-h,0px)) * 0.9)`，
-  面板在带内**居中**并用 `max-h-full` 限高——内容短时保持自然高度（**不与终端区域等高**），
-  超出时面板自身滚动。
+  （高度 `--vvh`、顶部偏移 `--vvt`）**减去顶栏**（`--tabbar-h`，移动端含第二行；
+  `useViewportHeight()` 实测 `<header>`，`onMounted` 首测 + `ResizeObserver` 跟踪，
+  断点切换/功能名折叠/旋转后自动更新）**再减去底部辅助键条**（`--keypad-h`，移动端才有，
+  由 KeypadBar 自报，见上）。**快捷指令 / 新建终端 / 设置三个弹窗统一用 style.css 的
+  `.term-region-center`**（定位带 = 终端区域本身）：`top: calc(var(--vvt,0px) +
+  var(--tabbar-h,0px))`、`height: calc(var(--vvh,100dvh) - var(--tabbar-h,0px) -
+  var(--keypad-h,0px))`；面板在带内**垂直居中**并用 `max-h-[90%]` 限高
+  （= 终端区域的 90%，上下各留 5%）——内容短时保持自然高度（**不与终端区域等高**），
+  超出时面板自身滚动。定位带 `px-4`（只留左右内边距）：纵向余量由 90% 上限 + 居中给出，
+  再加纵向 padding 会让实际高度小于 90%。
   ⚠️ 定位带横跨整宽、**必须 `pointer-events: none`**，面板侧 `pointer-events: auto`——
   否则「点弹窗外侧关闭遮罩」的点击会被定位带接住，面板四周的点击全部失效（实测如此）。
   不要退回 `fixed inset-0` 居中：它相对布局视口，iOS 键盘弹起时布局视口不缩、弹窗会被
@@ -165,8 +175,9 @@
   **不要**用 `100vh/50vh`（iOS 键盘弹起/地址栏收合只改可视视口，vh 会算错）、
   **不要**用 `bottom: 0`（相对布局视口，键盘弹起时壳层底边被 `--vvt` 下移后错位）、
   **不要**在 CSS 里按 TabBar 的 padding/border 拼算顶栏高（改结构即失准；移动端第二行
-  实测盒高比 `min-h-10` 多 1px，拼算会差 1px）。两个变量都写了回退值，缺失时不会塌高。
-  使用情况：三个弹窗都是 `.term-region-center` + 面板 `max-h-full pointer-events-auto`
+  实测盒高比 `min-h-10` 多 1px，拼算会差 1px）。三个变量都写了回退值（缺失按 0），
+  缺失时不会塌高。
+  使用情况：三个弹窗都是 `.term-region-center` + 面板 `max-h-[90%] pointer-events-auto`
   （宽度分别是 `max-w-lg`（快捷指令）/ `max-w-sm`（新建终端、设置））；
   窄屏/键盘弹起时会变成内部滚动，别把 `overflow-y-auto`（设置）与内层列表的
   `flex-1 min-h-0 overflow-y-auto`（快捷指令、选人窗）删掉。

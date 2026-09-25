@@ -66,12 +66,12 @@ async function moveDown(idx: number) {
       <div v-if="open" class="fixed inset-0 z-50">
         <!-- 遮罩仍铺满全屏（维持模态语义：点任意处关闭，含顶栏区域） -->
         <div class="absolute inset-0 bg-black/50" @click="close"></div>
-        <!-- 面板在「终端区域」的 90% 高度带内居中（见 style.css 的 .term-region-center）：
-             高度随内容自适应、上限为终端区域的 90%，超出时列表内部滚动；
-             宽度仍由 max-w-lg 居中限制（卡片式，不满宽）。 -->
-        <div class="absolute left-0 right-0 term-region-center flex items-center justify-center p-4">
+        <!-- 面板在「终端区域」内垂直居中（见 style.css 的 .term-region-center）：
+             高度随内容自适应、上限为终端区域的 90%（终端区已扣掉顶栏与底部辅助键条），
+             超出时列表内部滚动；宽度仍由 max-w-lg 居中限制（卡片式，不满宽）。 -->
+        <div class="absolute left-0 right-0 term-region-center flex items-center justify-center px-4">
           <div
-            class="relative w-full max-w-lg max-h-full pointer-events-auto bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop flex flex-col"
+            class="relative w-full max-w-lg max-h-[90%] pointer-events-auto bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop flex flex-col"
           >
             <!-- 顶部：标题 + 新增 / 关闭 -->
             <div class="flex items-center justify-between px-5 py-3 border-b border-line dark:border-line-dark shrink-0">

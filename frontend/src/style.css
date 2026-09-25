@@ -291,22 +291,23 @@ body {
   pointer-events: none;
 }
 
-/* 弹窗定位带：把浮层放在「终端区域」的 90% 高度带内并居中。终端区 = 壳层
- * （高度 --vvh、顶部偏移 --vvt）减去顶栏（--tabbar-h，由 useViewportHeight() 实测）。
- * 快捷指令 / 新建终端 / 设置三个弹窗都用它：面板 max-h-full 限高，内容短时保持自然
- * 高度、超出时面板自身滚动，因此弹窗既不与终端区等高、也不会超出终端区域。
+/* 弹窗定位带 = 「终端区域」本身，快捷指令 / 新建终端 / 设置三个弹窗共用：
+ *   终端区 = 壳层（高 --vvh、顶偏移 --vvt）− 顶栏（--tabbar-h，移动端含第二行）
+ *            − 底部辅助键条（--keypad-h，移动端才有，桌面为 0）
+ * 面板在带内垂直居中、用 max-h-[90%] 限高（= 终端区域的 90%）：内容短时保持自然高度，
+ * 超出时面板自身滚动——因此弹窗既不与终端区域等高，也绝不会压住顶栏或底部键条。
  *
  * 不用 100vh/50vh 这类视口单位：iOS 上键盘弹起/地址栏收合只改可视视口，vh 会算错。
  * 也不用 `bottom: 0`（它相对布局视口，键盘弹起时壳层底边被 --vvt 下移后会错位），
  * 更不用 `fixed inset-0` 居中（同样相对布局视口，键盘弹起时会被键盘盖住）。
- * 两个变量都带回退值：--tabbar-h 缺失时按 0 处理（带高 = 壳高 × 0.9，不会塌成 0），
+ * 三个变量都带回退值（缺失按 0）：--tabbar-h / --keypad-h 缺失时带高 = 壳高，
  * --vvh 缺失时退 100dvh。宽度仍由 max-w-lg / max-w-sm 居中限制（卡片式，不满宽）。
  *
  * ⚠️ 定位带横跨整宽，必须 pointer-events: none，面板侧 pointer-events: auto——
  * 否则「点弹窗外侧关闭」的点击会被定位带接住，面板四周的点击全部失效。 */
 .term-region-center {
   top: calc(var(--vvt, 0px) + var(--tabbar-h, 0px));
-  height: calc((var(--vvh, 100dvh) - var(--tabbar-h, 0px)) * 0.9);
+  height: calc(var(--vvh, 100dvh) - var(--tabbar-h, 0px) - var(--keypad-h, 0px));
   pointer-events: none;
 }
 

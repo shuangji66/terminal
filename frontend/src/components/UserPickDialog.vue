@@ -107,11 +107,12 @@ function confirmPickRoot() {
     <Transition name="modal-fade">
       <div v-if="open" class="fixed inset-0 z-50">
         <div class="absolute inset-0 bg-black/50" @click="close"></div>
-        <!-- 弹窗层对齐「终端区域」的 90% 高度带（见 style.css 的 .term-region-center），
-             面板 max-h-full 限高：常规选项与筛选框固定，应用列表内部滚动。 -->
-        <div class="absolute left-0 right-0 term-region-center flex items-center justify-center p-4">
+        <!-- 弹窗层 = 「终端区域」（已扣顶栏与底部辅助键条，见 style.css 的
+             .term-region-center），面板在其中垂直居中、max-h-[90%] 限高：
+             常规选项与筛选框固定，应用列表内部滚动。 -->
+        <div class="absolute left-0 right-0 term-region-center flex items-center justify-center px-4">
           <div
-            class="relative w-full max-w-sm max-h-full pointer-events-auto bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop p-5 flex flex-col"
+            class="relative w-full max-w-sm max-h-[90%] pointer-events-auto bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop p-5 flex flex-col"
           >
             <div class="flex items-center justify-between shrink-0">
               <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('user_pick_title') }}</h3>
