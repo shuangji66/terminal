@@ -113,14 +113,6 @@ function cancelDeleteQuickCmd() {
   deleteTarget.value = null
 }
 
-// 拖拽排序后立即持久化到后端
-async function handleReorder(orderedIds: string[]) {
-  try {
-    await qc.reorder(orderedIds)
-  } catch {
-    toast.show(t('qc_save_failed'), 'error')
-  }
-}
 </script>
 
 <template>
@@ -155,7 +147,6 @@ async function handleReorder(orderedIds: string[]) {
       @add="onAddCmd"
       @edit="onEditCmd"
       @delete="onDeleteCmd"
-      @reorder="handleReorder"
     />
     <QuickCmdEditDialog v-model:visible="editVisible" :cmd="editingCmd" @save="saveQuickCmd" />
     <SettingsDialog v-model:visible="settingsVisible" />

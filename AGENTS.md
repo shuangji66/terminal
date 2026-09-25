@@ -89,7 +89,10 @@
 - `TerminalPane.vue` — 每个标签一个 xterm 实例 + WS（**单挂载点**：被其他设备接管时进入
   `detached` 状态——`markDetached()` 置状态、写提示行、弹 toast、`connected=false`，
   **不自动重连**，用户点「重连」即显式夺回）；xterm v6 + addons（fit/webgl/
-  search/web-links/clipboard/unicode11/serialize/image）；主题（深色黑底绿字 / 浅色米白
+  search/web-links/clipboard/unicode11）。**刻意不加载 `SerializeAddon`（无导出需求）与
+  `ImageAddon`**（iip/sixel 默认 `storageLimit` 128MB、pixelLimit 数百万像素：终端里
+  `cat` 一个恶意文件就能驱动解码/缓存；实测加回后推一段 iip 序列会真的生成图片节点，
+  不加载则一个节点都没有）——要用就显式限流后再加回；主题（深色黑底绿字 / 浅色米白
   黑字）、字号（来自 settings store）动态应用；会话控制帧处理（`\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07`）；搜索悬浮框；鼠标选中自动复制（桌面端）；
   **移动端长按选词并自动复制**（`handleLongPress` → `selectWordAt`：按触摸坐标算列/行 →
@@ -371,6 +374,24 @@
   顶号协议）+ 两个浏览器上下文端到端跑「A 打开 → B 打开顶掉 A → A 不自动重连 →
   A 点重连只夺回被点的那个会话」；沙箱里 PTY 建不起来（`open /dev/ptmx: permission denied`），
   真会话只能部署后真机验证。
+- **快捷指令：保存失败的回滚快照必须在「改动之前」拍**：`stores/quickCmds.ts` 的
+  `add/update/remove/reorder` 都是**先改 store**再调 `persist(before)`，`before` 由
+  `snapshot()` 在改动前深拷贝得到。曾经把快照放在 `persist()` 内部——失败时"回滚"回去的
+  正是保存失败的那一份，UI（编辑弹窗已关闭）看起来是保存成功的。另外 `load()` 失败要
+  置 `loadError`（面板显示「加载快捷指令失败 + 重试」而不是「暂无快捷指令」，否则用户
+  会以为数据没了）并 toast `qc_load_failed`；列表里的上移/下移失败要 toast
+  `qc_save_failed`（store 已回滚，UI 不能显示后端没接受的顺序）。
+- **`useTheme()` 的媒体查询监听必须在闭包里持有自己的 MQL**：`composables/useTheme.ts`
+  里 `mediaQuery` 是模块级变量，每个面板调用 `useTheme()` 都会覆盖它——`onBeforeUnmount`
+  必须 `removeEventListener` 到**本次挂载创建的那个** `mql`（局部 const），否则移除的是
+  "别人"的监听：每挂载一个标签就永久多一个监听（实测关掉一个面板会误摘另一个面板的监听，
+  而自己的留在那里）。验证方式：用 `addInitScript` 包一层 `window.matchMedia` 记录每个
+  MQL 实例的 add/remove 次数，关掉标签后断言"被关面板的 removed=1、存活面板仍 live、
+  存活监听总数 -1"。
+- **面板内的提示气泡要用本面板的 ref，不能 `document.querySelector`**：所有标签的面板都留在
+  DOM 里（非激活面板只是 `visibility:hidden`），`document.querySelector('.term-copy-toast')`
+  永远命中**第一个**标签的气泡 → 提示落在隐藏面板上，用户看不到。用
+  `toastEl` 模板 ref（`TerminalPane.vue` 的 `showToast`）。
 - **标签重命名：模板 ref 在 `v-for` 里会变成数组 + 「点别处」不能只靠 blur**：`TabBar.vue`
   的重命名输入框写在 `v-for` 内，`ref="renameInput"` 会被 Vue 收集成 `HTMLInputElement[]`，
   `renameInput.value?.focus()` 于是抛 `focus is not a function`（实测控制台报

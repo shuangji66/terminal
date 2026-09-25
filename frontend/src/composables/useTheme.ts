@@ -51,13 +51,16 @@ export function useTheme() {
     themeMode.value = saved && ['light', 'dark', 'system'].includes(saved) ? saved : 'system'
     applyTheme(themeMode.value)
 
-    mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    // 用**闭包里的** mql 注册与移除：mediaQuery 是模块级变量，每个面板都会覆盖它，
+    // 从它上面 remove 是移除"别人"的监听（身份不匹配）= 每挂载一个标签就永久多一个监听。
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    mediaQuery = mql
     const handler = (e: MediaQueryListEvent) => {
       systemPrefersDark.value = e.matches
       if (themeMode.value === 'system') applyTheme('system')
     }
-    mediaQuery.addEventListener('change', handler)
-    onBeforeUnmount(() => mediaQuery?.removeEventListener('change', handler))
+    mql.addEventListener('change', handler)
+    onBeforeUnmount(() => mql.removeEventListener('change', handler))
   })
 
   return { themeMode, isDark, setTheme, cycleTheme, applyTheme }

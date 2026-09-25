@@ -47,6 +47,8 @@ onMounted(() => {
   }
 })
 onBeforeUnmount(() => {
+  // 关闭标签时可能正按着某个键：不清掉这个 100ms 定时器，它会一直往已销毁的面板里发键
+  stopRepeat()
   keypadRo?.disconnect()
   keypadRo = null
   // 可能还有其他标签的键条实例仍在（非激活面板只是 hidden），等 DOM 更新后再同步

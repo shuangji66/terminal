@@ -102,10 +102,6 @@ export const api = {
   // 应用用户列表（appcenter-cli list 解析结果，后端已过滤 trim.* 与不可用项）
   appUsers: () =>
     request<{ ok: boolean; apps: AppUserInfo[]; homeTemplate: string }>('/api/apps'),
-  sessionHistory: (id: string) =>
-    request<{ ok: boolean; id: string; size: number; content: string }>(
-      '/api/session/history?id=' + encodeURIComponent(id)
-    ),
   closeSession: (id: string) =>
     request<{ ok: boolean; id: string }>('/api/session?id=' + encodeURIComponent(id), { method: 'DELETE' }),
   clearSessionHistory: (id: string) =>

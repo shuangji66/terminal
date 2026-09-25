@@ -14,8 +14,6 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { SerializeAddon } from '@xterm/addon-serialize'
-import { ImageAddon } from '@xterm/addon-image'
 import { useTheme } from '@/composables/useTheme'
 import { t } from '@/i18n'
 import { useSessionsStore, type Tab } from '@/stores/sessions'
@@ -44,6 +42,10 @@ const settings = useSettingsStore()
 const { isDark } = useTheme()
 
 const el = ref<HTMLElement | null>(null)
+// 本面板自己的提示气泡。**不能用 document.querySelector('.term-copy-toast')**：所有标签的
+// 面板都留在 DOM 里（非激活面板只是 visibility:hidden），会命中第一个标签的气泡 → 提示
+// 落在隐藏面板上，用户什么也看不到。
+const toastEl = ref<HTMLElement | null>(null)
 
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
@@ -269,8 +271,6 @@ function handleData(raw: string) {
     markDetached()
   }
   rest = rest.replace(/\x1b\]exit\x07/g, () => {
-    const c = myCtl()
-    if (c) c.exited = true
     store.setTabStatus(props.tab.uid, 'exited')
     return ''
   })
@@ -382,8 +382,6 @@ function openSocket() {
 }
 
 const reconnect = () => {
-  const c = myCtl()
-  if (c) c.exited = false
   store.setTabStatus(props.tab.uid, 'connecting')
   // 重连 = 重置终端显示（清空缓冲），随后重新挂载会话——后端会从临时历史文件
   // 回放全部内容后再进入实时流，实现「重连同同步加载会话历史消息」。
@@ -525,8 +523,8 @@ function stopRepeat() {
   }
 }
 
-// 复制已由桌面鼠标选中自动复制 + 移动端系统文字工具取代，不再提供按钮入口；
-// 此处保留供可能的程序化调用，但顶栏不显示复制按钮。
+// 复制没有按钮入口：桌面靠鼠标框选自动复制、移动端靠长按选词自动复制（见 onSelectionChange）。
+// copyText 只被这两条路径调用。
 
 // 复制 / 粘贴 / 清屏
 // 剪贴板写入：优先异步 Clipboard API；非安全上下文（http 反代）时用 execCommand 兜底
@@ -593,7 +591,7 @@ function clearTerminal() {
 }
 
 function showToast(msg: string) {
-  const hint = document.querySelector('.term-copy-toast') as HTMLElement | null
+  const hint = toastEl.value
   if (!hint) return
   hint.textContent = msg
   hint.classList.remove('opacity-0', 'pointer-events-none')
@@ -612,15 +610,17 @@ function showToast(msg: string) {
 // 但 beta 的手势层 preventDefault 掉了浏览器的合成鼠标事件，安卓/iOS 上轻触拉不起键盘
 // （已实测无效并回退），故滚动、滚动条拖动全部在本组件实现，不再依赖任何 xterm 触摸能力。
 //
-// 单指拖动 = 把纵向位移换算成行数调 term.scrollLines()（沿用回退前的自研实现）；
-// 滚动条 = 触屏上让滑块常驻可见、加宽热区，拖动由本组件按 pointer 事件驱动
-// term.scrollLines()（xterm 的 GlobalPointerMoveMonitor 在触屏上收不到跨元素 pointermove，
-// 必须自接管）；长按选词仍自研（xterm 浏览器层只监听鼠标事件，iOS 不合成）。
+// 单指拖动 = 把纵向位移换算成行数调 term.scrollLines()（沿用回退前的自研实现）。
+// 滚动条滑块**不需要**自研：xterm 6.0.0 在 .scrollbar 上监听 pointerdown，内部用
+// setPointerCapture + window 级 pointermove，触摸/鼠标统一可用（曾实现过自接管版本，后证实
+// 多余且与原生抢事件，已删）。本组件只负责 CSS 两件事：触屏下让滑块常驻可见、加宽热区
+// （见 style.css 的 (hover: none) 段），否则 Auto 可见性依赖 hover、触屏永远等不到。
+// 长按选词仍自研（xterm 浏览器层只监听鼠标事件，iOS 不合成）。
 //
 // 本组件的触摸职责四件：
 //   - 按住不动超过 LONG_PRESS_MS → 长按选词（位移超过 TAP_SLOP 即取消，改为滚动）
 //   - 单指纵向拖动 → 换算行数滚动
-//   - 滚动条滑块拖动 → 按像素换算行数滚动（热区加宽，见 style.css）
+//   - 滚动条滑块拖动 → 交给 xterm 自带的 pointer 处理（本组件只保证触屏上能抓到，见 style.css）
 //   - 其余 → 轻触：聚焦终端（Android 上这是拉起软键盘的**唯一**路径，见下）
 //
 // ⚠️ 轻触聚焦为何必须由本组件做：iOS Safari 本来就不把触摸合成鼠标事件（对
@@ -1156,16 +1156,8 @@ function initTerminal() {
   } catch (e) {
     console.warn('clipboard addon:', e)
   }
-  try {
-    term.loadAddon(new SerializeAddon())
-  } catch (e) {
-    console.warn('serialize addon:', e)
-  }
-  try {
-    term.loadAddon(new ImageAddon())
-  } catch (e) {
-    console.warn('image addon:', e)
-  }
+  // 刻意不加载 SerializeAddon（无导出需求）与 ImageAddon（iip/sixel 默认 storageLimit 128MB、
+  // pixelLimit 数百万像素，终端里 cat 一个恶意文件就能驱动解码/缓存）。要用再按需加回并显式限流。
 
   // open() 要等终端字体就绪（见 waitTerminalFont）：终端字号 10–26px、字宽因字体而异，
   // 拿兜底字体量出来的行列是错的。等待上限 FONT_WAIT_MS（字体已由 main.ts 预取，正常几乎
@@ -1311,8 +1303,7 @@ function regControls() {
       }
       return false
     },
-    connected: false,
-    exited: false
+    connected: false
   })
 }
 
@@ -1405,6 +1396,7 @@ onBeforeUnmount(() => {
            FitAddon 按本层尺寸换算行列，故外层的 10px 视觉边框不会被算进可用高度。 -->
       <div ref="el" class="term-mount">
         <div
+          ref="toastEl"
           class="term-copy-toast absolute bottom-2 right-2 z-30 px-3 py-1.5 rounded-md bg-black/70 text-white text-xs font-medium shadow-card opacity-0 pointer-events-none transition-opacity duration-200 whitespace-nowrap"
         ></div>
 

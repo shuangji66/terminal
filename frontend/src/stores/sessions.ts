@@ -13,7 +13,6 @@ export interface Tab {
   title: string // 自定义标题（'' = 使用默认「终端 N:<用户>」）
   userSpec: UserSpec // 本标签会话以哪个用户运行（nas=登录用户 / root / app:<APP NAME>）
   userLabel: string // 该用户的显示名（登录用户名 / root / 应用 APP NAME），用于默认标签名
-  createdAt: number
   status: TabStatus
   restoring: boolean // 是否正在回放历史
 }
@@ -21,8 +20,16 @@ export interface Tab {
 const TITLES_KEY = 'terminal-tab-titles'
 
 function readTitleMap(): Record<string, string> {
+  // localStorage 是用户可改的：形状不对（null / 字符串 / 数组 / 值非字符串）时不能直接当
+  // map 用——`map[id] = x` 会抛 TypeError 并打断整个恢复流程。
   try {
-    return JSON.parse(localStorage.getItem(TITLES_KEY) || '{}')
+    const raw: unknown = JSON.parse(localStorage.getItem(TITLES_KEY) || '{}')
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'string') out[k] = v
+    }
+    return out
   } catch {
     return {}
   }
@@ -79,7 +86,6 @@ export const useSessionsStore = defineStore('sessions', () => {
       title: preload?.title ?? '',
       userSpec,
       userLabel: preload?.userLabel ?? labelForSpec(userSpec),
-      createdAt: preload?.createdAt ?? Date.now(),
       status: preload?.status ?? 'connecting',
       restoring: preload?.restoring ?? false
     }
@@ -157,7 +163,6 @@ export const useSessionsStore = defineStore('sessions', () => {
           // 退回默认登录用户显示名），仅用于标签展示；挂载本身仍按 id 进行。
           addTab({
             id: s.id,
-            createdAt: new Date(s.createdAt).getTime(),
             restoring: true,
             status: 'connecting',
             userLabel: s.user || labelForSpec('nas')

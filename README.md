@@ -114,7 +114,7 @@
 | --- | --- |
 | 后端 | Go ≥ 1.27（标准库 + `github.com/creack/pty`，按 uid 切换用户） |
 | 前端 | Vue 3.5（Composition API / `<script setup>`）+ TypeScript 6 + Vite 8 |
-| 前端构建 | Tailwind CSS v4（`@tailwindcss/vite`）、Pinia 4、xterm.js v6（fit/webgl/search/web-links/clipboard/unicode11/serialize/image） |
+| 前端构建 | Tailwind CSS v4（`@tailwindcss/vite`）、Pinia 4、xterm.js v6（fit/webgl/search/web-links/clipboard/unicode11） |
 | 字体 | **终端**：内置 `Maple Mono CN`（`@automann/maple-mono-cn`，仅 Regular 400，unicode-range 切片按需加载）；**界面**：系统字体栈，**不从 CDN 拉字体** |
 | 类型检查 | `npm run type-check`（`vue-tsc --noEmit`，覆盖 `.vue` 的 script 与 template + 全部 `.ts`；锁定 TypeScript 6.x，TS 7 与 vue-tsc 不兼容） |
 | 通信 | Unix Socket、HTTP JSON API、WebSocket（终端） |

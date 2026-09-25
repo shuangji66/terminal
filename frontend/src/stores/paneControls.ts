@@ -12,7 +12,6 @@ export interface PaneControls {
   focus: () => void
   send: (data: string) => boolean
   connected: boolean
-  exited: boolean
 }
 
 export const usePaneControlsStore = defineStore('paneControls', () => {

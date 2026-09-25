@@ -66,11 +66,14 @@ function updateLabelState() {
   }
 }
 
+let stripRo: ResizeObserver | null = null
+
 onMounted(() => {
   updateLabelState()
   if (tabStripRef.value && window.ResizeObserver) {
-    const ro = new ResizeObserver(() => updateLabelState())
-    ro.observe(tabStripRef.value)
+    // 句柄要留着：卸载时断开，别让观察者活过组件
+    stripRo = new ResizeObserver(() => updateLabelState())
+    stripRo.observe(tabStripRef.value)
   }
 })
 
@@ -176,7 +179,11 @@ function cancelRename() {
   endRename(false)
 }
 
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDown, true))
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocPointerDown, true)
+  stripRo?.disconnect()
+  stripRo = null
+})
 
 // 关闭标签：已有后端会话（id 非空）时二次确认；新会话可直接关闭。
 // 注意：确认弹窗的 update:visible 只负责同步弹窗显隐，真正关闭在 confirmClose 中

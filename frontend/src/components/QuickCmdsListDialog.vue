@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { t } from '@/i18n'
 import { useQuickCmdsStore } from '@/stores/quickCmds'
+import { useToastStore } from '@/stores/toast'
 import type { QuickCmd } from '@/serverapi'
 
 const props = defineProps<{ visible: boolean }>()
@@ -15,6 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useQuickCmdsStore()
+const toast = useToastStore()
 
 const open = ref(props.visible)
 const loadingReorder = ref(false)
@@ -41,6 +43,9 @@ async function moveUp(idx: number) {
   loadingReorder.value = true
   try {
     await store.reorder(cmds.map((c) => c.id))
+  } catch {
+    // store 已回滚到改动前的顺序，这里只提示（否则 UI 显示的顺序后端并没有接受）
+    toast.show(t('qc_save_failed'), 'error')
   } finally {
     loadingReorder.value = false
   }
@@ -54,6 +59,8 @@ async function moveDown(idx: number) {
   loadingReorder.value = true
   try {
     await store.reorder(cmds.map((c) => c.id))
+  } catch {
+    toast.show(t('qc_save_failed'), 'error')
   } finally {
     loadingReorder.value = false
   }
@@ -86,6 +93,13 @@ async function moveDown(idx: number) {
             <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3">
             <div v-if="store.loading" class="text-sm text-ink-soft dark:text-ink-soft-dark text-center py-8">
               {{ t('loading') }}
+            </div>
+            <!-- 加载失败：显示错误态 + 重试，不能落到「暂无快捷指令」的空态 -->
+            <div v-else-if="store.loadError" class="text-center py-8">
+              <p class="text-sm text-danger">{{ t('qc_load_failed') }}</p>
+              <button class="g-btn-ghost !h-8 !px-3 text-xs mt-3" @click="store.load()">
+                {{ t('qc_retry') }}
+              </button>
             </div>
             <div
               v-else-if="!store.commands.length"
