@@ -87,9 +87,15 @@
   （`KeypadBar`）按键修饰符输入一次后自动解除；
   向 `paneControls` 注册命令入口（paste/clear/reconnect/search/focus/send）。
 - `KeypadBar.vue` — 移动端辅助键条（ESC/Tab/Ctrl/Alt/Shift/Ins/←↓→/符号）；
+  显隐由 `v-if="mobileLayout"`（`useMobileLayout()`）控制，**不用 `md:hidden`**
+  （iPad 宽度 ≥768px 会被宽度断点判成桌面而丢掉整条键条，见第 5 节「大屏触屏」）；
   长按连发；修饰键（Ctrl/Alt/Shift）变色指示按下态，输入一次后自动解除；
   所有非长按键采用 `@click` + `@touchstart.prevent` 双保险确保移动端可靠触发；
   底部内边距用 `--kb-safe-bottom`（键盘弹起时为 0，见下条）。
+- `composables/useMobileLayout.ts` — **是否按移动端（触屏）布局渲染**（当前唯一使用者是
+  `KeypadBar`）：判据 = 窄视口（<768px，保留旧行为）**或**触屏（`(hover:none) and
+  (pointer:coarse)`，另有「移动/平板 UA + `maxTouchPoints > 0`」兜底，覆盖接了触控板后
+  主指针变 `pointer: fine` 的情况）。模块级单例 ref，无生命周期钩子。
 - `composables/useViewportHeight.ts` — **虚拟键盘适配（App 壳层调用一次）**：监听
   `visualViewport` 的 `resize`/`scroll`，把可视视口几何写入 `<html>` 的 CSS 变量：
   `--vvh`（可视视口高度 = `.app-shell` 高度）、`--vvt`（可视视口相对布局视口的位移 =
@@ -292,6 +298,18 @@
   `stores/quickCmds.ts` 的 `newCmdId()`（优先 `randomUUID`，否则手拼 v4 UUID），
   **不要再直接调用 `crypto.randomUUID()`**。同理 `navigator.clipboard` 在 http 下也不存在
   （剪贴板已有 `legacyCopy` 兜底，见 `TerminalPane.vue`）。
+- **大屏触屏（iPad）不能被宽度断点判成桌面**：`md:`（768px）只表示「屏幕宽」，iPad 的 CSS
+  宽度是 768 / 834 / 1024px（横屏更大），全部 ≥768 —— 于是被当成桌面，底部辅助键条
+  （`KeypadBar`）被 `md:hidden` 整条隐藏，触屏上再也没有 ESC/Tab/Ctrl/Alt/方向键可用。
+  所以键条显隐一律走 `composables/useMobileLayout.ts`（触屏 **或** 窄视口），
+  **不要写回 `md:hidden`**；TabBar 的功能行仍按 `md` 断点（iPad 上显示更全的桌面行是刻意的，
+  含移动端第二行没有的搜索）。另注意 `(hover: none) and (pointer: coarse)` 在接了鼠标/
+  触控板后会失效（WebKit/Blink 把**主**指针改报成 `pointer: fine`），故该 composable 还有
+  「移动/平板 UA + `maxTouchPoints > 0`」兜底。
+  验证方式（本次用的）：真实后端产物 + `socat` 把 unix socket 转 TCP + headless Chromium 的
+  `Emulation.setDeviceMetricsOverride` + `setTouchEmulationEnabled` 逐场景独立启动，
+  判定要按 **可见**（`getBoundingClientRect().height > 0`）而非「DOM 里有没有」——
+  旧实现的 `md:hidden` 会留下 DOM 只隐藏显示，只看 DOM 会得出假阳性。
 - **虚拟键盘适配（iOS 底栏不跟随的根因）**：`index.html` 的
   `interactive-widget=resizes-content` **只对 Chrome/Firefox for Android 生效**；
   **Safari 至今不支持**（WebKit 已实现，尚未随版本发布），iOS 上键盘弹起只收缩

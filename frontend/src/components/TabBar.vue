@@ -55,9 +55,14 @@ function toggleLabels() {
   }
 }
 
+// 桌面功能行（搜索/粘贴/清屏/重连/快捷指令/设置所在的那一行）是否在屏幕上：
+// 判据就是 Tailwind md 断点，别改成 window.innerWidth 之类的宽度数字——两者等价，
+// 但这里真正要问的是「那一行可见吗」，且不应在 JS 里再写一个 768 魔数。
+const desktopRow = window.matchMedia('(min-width: 768px)')
+
 function updateLabelState() {
   const el = tabStripRef.value
-  if (!el || window.innerWidth < 768) return // 仅桌面端
+  if (!el || !desktopRow.matches) return // 仅桌面功能行可见时处理
   // 标签溢出 → 自动收起功能名；手动展开后 2s 内不立即收回，避免点了立刻又被收起
   if (labelsOn.value && el.scrollWidth > el.clientWidth + 8) {
     if (Date.now() - lastManualExpandAt > 2000) {

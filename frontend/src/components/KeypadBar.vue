@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 移动端辅助键条（仅在 md 以下显示）：
+// 移动端辅助键条（仅在「移动端布局」下渲染：触屏设备或窄视口，见 useMobileLayout）：
 //   第一行：ESC | ↑ | Tab | Ctrl | Alt | Shift | Insert（↑ 在第二位，与第二行的
 //            ← ↓ → 组成倒 T 型方向键组合；Insert 在最右）
 //   第二行：← | ↓ | → | . | / | - | = | "
@@ -8,6 +8,12 @@
 //   保底（避免浏览器在 prevent.stop 容器中不合成 click 导致按键无效）。
 // 底部内边距：默认安全区 + 8px；键盘弹起时 --kb-safe-bottom 为 0（安全区已被键盘覆盖，
 //   见 composables/useViewportHeight.ts），否则键条与键盘之间会多出一条安全区的空隙。
+// 显隐不能交给 md:hidden（宽度断点）：iPad 宽度 ≥768px 会被判成桌面而丢掉整条辅助键，
+//   改用 composables/useMobileLayout.ts 的「触屏或窄视口」判据。
+import { useMobileLayout } from '@/composables/useMobileLayout'
+
+const mobileLayout = useMobileLayout()
+
 const props = defineProps<{
   ctrl: boolean
   alt: boolean
@@ -65,7 +71,8 @@ const modOnCls = '!bg-brand !text-white'
 
 <template>
   <div
-    class="flex md:hidden shrink-0 flex-col gap-1 px-2 pt-1.5 bg-bg dark:bg-bg-dark border-t border-line dark:border-line-dark select-none"
+    v-if="mobileLayout"
+    class="flex shrink-0 flex-col gap-1 px-2 pt-1.5 bg-bg dark:bg-bg-dark border-t border-line dark:border-line-dark select-none"
     style="touch-action: manipulation; padding-bottom: calc(var(--kb-safe-bottom, env(safe-area-inset-bottom, 0px)) + 8px)"
     @touchstart.prevent.stop
   >
