@@ -62,6 +62,8 @@ export interface SessionInfo {
   lastActive: string
   size: number
   exited: boolean
+  /** 会话创建时请求的 user= 参数（'' = 登录用户 / root / app:<APP NAME>）；老后端可能没有 */
+  userSpec?: string
   // 会话实际运行用户的显示名（root / NAS 用户名 / 应用 APP NAME），用于标签上的用户标注
   user?: string
 }

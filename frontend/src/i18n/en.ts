@@ -26,7 +26,7 @@ export const en: Record<string, string> = {
   act_reconnect: 'Reconnect',
   copied: 'Copied to clipboard',
   not_connected: 'Terminal not connected',
-  paste_denied: 'Cannot read clipboard, use the keyboard paste instead',
+  paste_denied: 'Clipboard is unavailable over HTTP — paste via the right-click menu',
 
   theme_label: 'Theme',
   theme_light: 'Light',

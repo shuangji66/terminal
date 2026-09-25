@@ -89,7 +89,15 @@
 - `TerminalPane.vue` — 每个标签一个 xterm 实例 + WS（**单挂载点**：被其他设备接管时进入
   `detached` 状态——`markDetached()` 置状态、写提示行、弹 toast、`connected=false`，
   **不自动重连**，用户点「重连」即显式夺回）；xterm v6 + addons（fit/webgl/
-  search/web-links/clipboard/unicode11）。**刻意不加载 `SerializeAddon`（无导出需求）与
+  search/web-links/clipboard/unicode11）。**clipboard addon 是「只写不读」**：
+  自定义 provider（`readText` → 空串、`writeText` → 组件自己的 `copyText`），
+  因为默认的 `BrowserClipboardProvider` 会在程序发 `ESC]52;c;?BEL` 时用
+  `navigator.clipboard.readText()` 读走系统剪贴板、再经 `terminal.input()` 把内容当**键盘输入**
+  灌回 PTY——任何被 `cat`/`curl` 出来的内容都能这样拿到你的剪贴板（多数终端默认禁止该「读」）。
+  改成只写后，tmux/vim 的「复制到系统剪贴板」照常可用（实测剪贴板确实变成终端里发出的文本），
+  而 OSC 52 读不再往 PTY 灌任何字节（实测 inputTotal 不变）；顺带让 http 部署下 OSC 52 写入也不报错。
+  注意：顶栏「粘贴」按钮是**另一条独立路径**（直接 `navigator.clipboard.readText()` 后 `sock.send`），
+  与这个 addon 无关。**刻意不加载 `SerializeAddon`（无导出需求）与
   `ImageAddon`**（iip/sixel 默认 `storageLimit` 128MB、pixelLimit 数百万像素：终端里
   `cat` 一个恶意文件就能驱动解码/缓存；实测加回后推一段 iip 序列会真的生成图片节点，
   不加载则一个节点都没有）——要用就显式限流后再加回；主题（深色黑底绿字 / 浅色米白
@@ -409,6 +417,12 @@
   `/api/sessions` 上报的 `user`**（`sessionInfo.User = Session.username`，即实际 setuid 到的
   用户名），因此刷新/重启后 root 或应用用户会话不会被误标成登录用户。改这里时别退化成
   「一律用当前登录用户」。手动重命名（`tab.title` 非空）优先、不带后缀。
+  **恢复的标签还必须带上原 userSpec**：`/api/sessions` 每条会话都回报 `userSpec`
+  （后端在 `Session.spec` 里记住了创建时的 `user=` 参数，见 `sessions.go`/`terminal.go`），
+  `restore()` 用 `specForUser(s.userSpec)` 映射回 `nas` / `root` / `app:<APP NAME>`。
+  否则会话被后端重启带走后，TerminalPane 自动重建时会退化成 `nas`——root/应用用户的标签
+  会悄悄变成登录用户 shell，而标签名还显示着原用户（实测踩过）。别用运行用户名去猜
+  （分不清 NAS 用户名和应用名）。
 - **标签恢复的时序**：`App.onMounted` 先 `loadInfo` 再 `restore`；无会话可恢复时
   `restore()` 固定以当前登录用户（`nas`）建立会话，因此标签一出现就已经有会话。
 - **功能名折叠**：`labelsOn` 控制桌面功能名显示；仅**手动**展开（《》按钮），

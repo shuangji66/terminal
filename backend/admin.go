@@ -51,6 +51,9 @@ type sessionInfo struct {
 	// User 是会话实际运行用户的显示名（root / NAS 用户名 / 应用 APP NAME），
 	// 前端据此在标签上标注「终端 N:<user>」——恢复的会话也能显示真实用户。
 	User string `json:"user"`
+	// UserSpec 是创建该会话时请求的原始 user= 参数（'' = 登录用户 / root / app:<APP NAME>），
+	// 前端恢复标签时据此还原 userSpec：后端重启后自动重建会话不会把 root/应用用户降级成登录用户。
+	UserSpec string `json:"userSpec"`
 }
 
 // SetSPA attaches the embedded frontend assets to the admin mux.

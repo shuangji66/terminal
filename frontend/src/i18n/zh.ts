@@ -26,7 +26,7 @@ export const zh: Record<string, string> = {
   act_reconnect: '重连',
   copied: '已复制到剪贴板',
   not_connected: '终端未连接',
-  paste_denied: '无法读取剪贴板，请用系统键盘的粘贴',
+  paste_denied: 'HTTP访问无法读取剪贴板，请用右键菜单的粘贴',
 
   theme_label: '主题',
   theme_light: '浅色',

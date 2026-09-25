@@ -29,6 +29,10 @@ const wsChunkSize = 32 * 1024 // 32KB
 // Session 是一个独立的 PTY 终端会话。输出实时镜像到临时历史文件（应用停止时
 // 整目录清除），浏览器断开只“解挂载”不杀会话，刷新后凭 id 重新挂载并回放历史。
 type Session struct {
+	// spec 是创建时会话请求的原始 user= 参数（'' / 'nas' / 'root' / 'app:<APP NAME>'）。
+	// 前端靠它把「恢复的标签」还原成正确的 userSpec —— 后端重启后自动重建会话时，
+	// 若只按运行用户名猜，root/应用用户会被重建成登录用户（标签名却还写着原用户）。
+	spec       string
 	id         string
 	shell      string
 	renv       *RuntimeEnv
@@ -341,7 +345,7 @@ func newID() string {
 // create 新建会话：生成 id、创建临时历史文件、启动 PTY 与 pump 协程。创建失败时
 // 返回错误并保证不残留文件。调用方随后应把 id 通过控制帧告知前端。
 // runAs 决定会话以哪个用户运行（nil → 当前进程用户）。
-func (m *SessionManager) create(runAs *runUser) (*Session, error) {
+func (m *SessionManager) create(runAs *runUser, spec string) (*Session, error) {
 	if runAs == nil {
 		var err error
 		runAs, err = resolveRunUser(m.renv, "", "")
@@ -373,6 +377,7 @@ func (m *SessionManager) create(runAs *runUser) (*Session, error) {
 	}
 	s := &Session{
 		id:         id,
+		spec:       spec,
 		shell:      m.renv.Shell,
 		renv:       m.renv,
 		cmd:        cmd,
@@ -411,6 +416,7 @@ func (m *SessionManager) list() []sessionInfo {
 			LastActive: s.lastActive.Format(time.RFC3339),
 			Exited:     s.isExited(),
 			User:       s.username,
+			UserSpec:   s.spec,
 		}
 		s.histMu.Lock()
 		if s.hist != nil {

@@ -148,6 +148,15 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (tab) tab.status = status
   }
 
+  // 后端上报的原始 user= 参数 → 前端 UserSpec。**恢复的标签必须沿用原 spec**：
+  // 会话被后端重启带走后 TerminalPane 会自动重建，若这里退化成 'nas'，root/应用用户的标签
+  // 会悄悄变成登录用户 shell（而标签名还显示原用户）。老后端没有该字段时才回退 nas。
+  function specForUser(raw: string | undefined): UserSpec {
+    if (raw === 'root') return 'root'
+    if (raw && raw.startsWith('app:')) return raw as UserSpec
+    return 'nas'
+  }
+
   // 前端启动：先从后端恢复活动会话；无会话则新建一个——固定以当前登录用户（nas）建立。
   // （新建标签页另走 TabBar 的用户选择弹窗，与本函数无关。）
   async function restore() {
@@ -163,9 +172,10 @@ export const useSessionsStore = defineStore('sessions', () => {
           // 退回默认登录用户显示名），仅用于标签展示；挂载本身仍按 id 进行。
           addTab({
             id: s.id,
+            userSpec: specForUser(s.userSpec),
             restoring: true,
             status: 'connecting',
-            userLabel: s.user || labelForSpec('nas')
+            userLabel: s.user || labelForSpec(specForUser(s.userSpec))
           })
         }
         // 恢复历史内容（回放）由各 TerminalPane 负责：先取历史写入 xterm，再挂载 WS

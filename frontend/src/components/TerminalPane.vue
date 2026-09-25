@@ -12,7 +12,12 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
+import {
+  ClipboardAddon,
+  Base64,
+  type ClipboardSelectionType,
+  type IClipboardProvider
+} from '@xterm/addon-clipboard'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { useTheme } from '@/composables/useTheme'
 import { t } from '@/i18n'
@@ -1152,7 +1157,19 @@ function initTerminal() {
     console.warn('search addon:', e)
   }
   try {
-    term.loadAddon(new ClipboardAddon())
+    // OSC 52 剪贴板：**只写不读**。
+    // 默认 provider（BrowserClipboardProvider）在程序发 `ESC]52;c;?BEL` 时会用
+    // navigator.clipboard.readText() 读走系统剪贴板，再经 terminal.input() 把内容当**键盘输入**
+    // 灌回 PTY —— 任何被 cat/curl 出来的内容都能这样读到你的剪贴板（多数终端默认禁止该「读」）。
+    // 这里读一律返回空串；写改走本组件自己的 copyText（https 用 Clipboard API、http 用 legacyCopy），
+    // 于是 tmux/vim 的「复制到系统剪贴板」照常可用，且 http 部署下 OSC 52 写入也不再报错。
+    const clipboardProvider: IClipboardProvider = {
+      readText: () => '',
+      writeText: (_selection: ClipboardSelectionType, text: string) => {
+        copyText(text)
+      }
+    }
+    term.loadAddon(new ClipboardAddon(new Base64(), clipboardProvider))
   } catch (e) {
     console.warn('clipboard addon:', e)
   }

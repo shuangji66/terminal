@@ -166,7 +166,7 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			conn.Close()
 			return
 		}
-		s, cerr := t.mgr.create(runAs)
+		s, cerr := t.mgr.create(runAs, r.URL.Query().Get("user"))
 		if cerr != nil {
 			conn.Write(wsFrame(opText, []byte("\r\n\x1b[31mcreate session failed: "+cerr.Error()+"\x1b[0m\r\n")))
 			conn.Write(wsFrame(opClose, nil))
