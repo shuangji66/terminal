@@ -152,7 +152,9 @@
   （多实例：每个标签一个键条，先卸载的那个不能直接把变量清零）。
 - `main.ts` — 入口：`import '@automann/maple-mono-cn/regular.css'`（内置终端字体）+
   `document.fonts.load('16px "Maple Mono CN"', 'Aa中0')` 提前预热（App 挂载/会话恢复/握手
-  期间通常已就绪）。**终端字体只在这里 import 一次**，别在别处再引其它字重。
+  期间通常已就绪）。框架条件：**设置里选的是「系统字体」（localStorage 的
+  `terminal-font-family === 'system'`）时不预热**，那几百 KB 的 woff2 切片根本用不到。
+  **终端字体只在这里 import 一次**，别在别处再引其它字重。
 - `composables/useKeypadPage.ts` — 辅助键条的**当前页**（0/1）与翻页 `step(±1)`；
   `step` **夹取不循环**（到边界即停）；模块级共享，所有标签的键条同步同一页。
 - `composables/useMobileLayout.ts` — 两个布局判据：
@@ -172,8 +174,8 @@
   `--tabbar-h`（**实测**顶栏高度，见第 5 节「浮层与终端区域对齐」）。
   不用 `100dvh` 的原因见第 5 节「虚拟键盘适配」。
 - `stores/` — `sessions`（标签 + userSpec + userLabel + 恢复/关闭；默认标题为
-  `终端N:<用户>`，见第 5 节「标签上的用户标注」）、`settings`（仅终端字号，
-  存 localStorage）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
+  `终端N:<用户>`，见第 5 节「标签上的用户标注」）、`settings`（**终端字号 + 终端字体**，
+  都只存 localStorage：`terminal-font-size` / `terminal-font-family`）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
   顶栏按钮通过激活 uid 解析，避免后台标签覆盖）、`appUsers`（应用用户列表**内存缓存** +
   **浏览器本地的置顶名单**，冷启动预取一次，见第 5 节「应用用户列表缓存」）。
 - `serverapi/index.ts` — `runtimeBase()` / `wsUrl(id?, user?)` / `api.*`。
@@ -358,6 +360,16 @@
   `.xterm-helper-textarea` 上派发合成事件序列并读回 `send()` 的内容（本次排查脚本临时放在
   `/tmp/imerepro/harness.mjs`，未入库）；沙箱里 `/dev/ptmx` 不可用，PTY 建不起来，端到端
   只能验到 API 层。
+- **终端字体可在设置里切换（Maple Mono / 系统字体），切换必须重测字符尺寸**：
+  `settings.terminalFont`（`stores/settings.ts`，只存 localStorage，默认 `maple`）驱动
+  `TerminalPane` 的 `fontFamilyFor()`：`maple` → `"Maple Mono CN", <系统等宽栈>`，
+  `system` → 纯系统等宽栈（两个字符串必然不同，所以赋值一定能触发 xterm 重测）。
+  切换的 watch **先等内置字体就绪再改 options**（切回 Maple 时否则会量到兜底字体），
+  然后 `fitAndResize()` 把新行列数下发给 PTY；`waitTerminalFont()` 在 `system` 下直接返回，
+  免得白等。`main.ts` 也只在**不是 system** 时才预热 Maple 字体切片（选系统字体时那几百 KB
+  的 woff2 不会被取）。实测：默认 Maple 行高 21px、切系统字体变 22px（= 真的重测了）、
+  刷新后仍是系统字体且 0 个 woff2 请求、切回 Maple 行高回到 21px 并按需加载切片。
+  设置项只写浏览器、**不落后端**（实测切换期间没有任何后端写请求）。
 - **终端用的是内置 webfont，`open()` 前必须等它就绪（xterm 不会自己重测）**：
   `waitTerminalFont()` 在 `term.open()` 前 `await document.fonts.load(<size>px "Maple Mono CN", 'Aa中0')`
   （带 `FONT_WAIT_MS = 800` 兜底）。原因：**xterm 只在 `open()` 里量一次字符尺寸**

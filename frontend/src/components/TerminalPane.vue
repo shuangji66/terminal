@@ -1022,9 +1022,17 @@ function installImeFallback() {
 
 // ---------- 初始化 ----------
 // ---------- 终端字体（内置 Maple Mono CN，见 src/main.ts） ----------
-// 只内置 Regular 400；身后是系统等宽/中文兜底，供 Maple 未覆盖的字形（emoji 等）使用。
-const TERMINAL_FONT_FAMILY =
-  '"Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei", monospace'
+// 只内置 Regular 400。设置里可在「Maple Mono」（默认）与「系统字体」之间切换：
+//  - maple  ：Maple 在前，身后是系统等宽/中文兜底（供 Maple 未覆盖的字形如 emoji 使用）
+//  - system ：纯系统等宽栈（含中文兜底）
+const SYSTEM_MONO_FAMILY =
+  'ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei", monospace'
+const TERMINAL_FONT_FAMILY = '"Maple Mono CN", ' + SYSTEM_MONO_FAMILY
+
+// 当前设置对应的字体族（两者字符串必然不同 → 赋值时能触发 xterm 重新测量字符尺寸）
+function fontFamilyFor(font: 'maple' | 'system'): string {
+  return font === 'system' ? SYSTEM_MONO_FAMILY : TERMINAL_FONT_FAMILY
+}
 // 等价写法（家族名不带引号）：xterm 只在 fontFamily/fontSize 的**值发生变化**时才重新测量
 // 字符尺寸（OptionsService 里 `rawOptions[k] !== v && fire`），重复赋同一个字符串不会触发——
 // 字体迟到时靠它强制重测一次。
@@ -1039,6 +1047,8 @@ const FONT_PROBE_TEXT = 'Aa中0'
 // 下发给 PTY 的 cols/rows 也是错的。
 async function waitTerminalFont(size: number): Promise<boolean> {
   if (typeof document === 'undefined' || !document.fonts) return true
+  // 选「系统字体」时终端根本不用 Maple，不必（也不该）等它：等反而会拖慢 open()
+  if (settings.terminalFont === 'system') return true
   const spec = `${size}px "Maple Mono CN"`
   if (document.fonts.check(spec, FONT_PROBE_TEXT)) return true
   const timeout = new Promise<boolean>((resolve) =>
@@ -1057,7 +1067,7 @@ function initTerminal() {
   term = new Terminal({
     cursorBlink: true,
     fontSize: settings.fontSize,
-    fontFamily: TERMINAL_FONT_FAMILY,
+    fontFamily: fontFamilyFor(settings.terminalFont),
     theme: isDark.value ? DARK_PALETTE : LIGHT_PALETTE,
     scrollback: 2000,
     letterSpacing: 0,
@@ -1332,6 +1342,22 @@ watch(
 )
 
 // 终端字号（设置弹窗调整，保存在浏览器存储）：即时生效并重新适配尺寸
+// 终端字体切换：先（切到 Maple 时）等内置字体就绪，再改 options.fontFamily。
+// xterm 只在 fontFamily/fontSize **值变化**时重新测量字符尺寸（见 AGENTS），两个字符串不同
+// 所以一定能触发；随后 fit 一次把新的行列数下发给 PTY。
+watch(
+  () => settings.terminalFont,
+  async (font) => {
+    if (!term) return
+    if (font === 'maple') {
+      await waitTerminalFont(settings.fontSize)
+      if (disposed || !term) return
+    }
+    term.options.fontFamily = fontFamilyFor(font)
+    nextTick(() => requestAnimationFrame(() => fitAndResize()))
+  }
+)
+
 watch(
   () => settings.fontSize,
   (n) => {

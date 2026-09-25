@@ -2,12 +2,13 @@
 // SettingsDialog — 设置弹窗：
 //  - 主题 / 语言：图标按钮一行（标题下方置顶）
 //  - 终端字号：数字显示框左减右加（10–26），保存在浏览器 localStorage，即时生效
+//  - 终端字体：Maple Mono（内置，默认）/ 系统字体，同样只存浏览器、即时生效
 //  - 关于：标题与「设置」标题同样式，右侧仅 GitHub 图标
 // 会话以哪个用户启动不再有全局设置：新建终端时由 UserPickDialog 逐个选择。
 import { ref, computed, watch } from 'vue'
 import { t, setLocale, useI18n } from '@/i18n'
 import { useTheme } from '@/composables/useTheme'
-import { useSettingsStore } from '@/stores/settings'
+import { useSettingsStore, type TerminalFont } from '@/stores/settings'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{
@@ -41,6 +42,12 @@ function close() {
   open.value = false
   emit('update:visible', false)
 }
+
+// ---------- 终端字体 ----------
+const fontOptions = computed<{ value: TerminalFont; label: string }[]>(() => [
+  { value: 'maple', label: t('settings_font_maple') },
+  { value: 'system', label: t('settings_font_system') }
+])
 
 // ---------- 终端字号 ----------
 function decFont() {
@@ -90,6 +97,28 @@ function incFont() {
                 </svg>
                 <span>{{ locale === 'zh' ? t('lang_zh') : t('lang_en') }}</span>
               </button>
+            </div>
+
+            <!-- 终端字体：内置 Maple Mono / 系统字体（无描述） -->
+            <div class="mt-4">
+              <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1.5">
+                {{ t('settings_font_family') }}
+              </label>
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  v-for="opt in fontOptions"
+                  :key="opt.value"
+                  class="rounded-md border px-3 py-2 text-sm font-medium transition-colors"
+                  :class="
+                    settings.terminalFont === opt.value
+                      ? 'border-brand bg-brand/10 text-brand'
+                      : 'border-line dark:border-line-dark text-ink dark:text-ink-dark hover:border-brand hover:bg-brand/5'
+                  "
+                  @click="settings.setTerminalFont(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
             </div>
 
             <!-- 终端字号 -->

@@ -76,6 +76,9 @@ export const en: Record<string, string> = {
 
   // Settings
   settings_title: 'Settings',
+  settings_font_family: 'Terminal font',
+  settings_font_maple: 'Maple Mono',
+  settings_font_system: 'System font',
   settings_font_size: 'Font size',
   settings_font_size_hint: '(10–26)',
   qc_close: 'Close',

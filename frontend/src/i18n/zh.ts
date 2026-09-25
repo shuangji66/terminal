@@ -76,6 +76,9 @@ export const zh: Record<string, string> = {
 
   // 设置
   settings_title: '设置',
+  settings_font_family: '终端字体',
+  settings_font_maple: 'Maple Mono',
+  settings_font_system: '系统字体',
   settings_font_size: '终端字号',
   settings_font_size_hint: '（10–26）',
   qc_close: '关闭',

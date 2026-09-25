@@ -1,8 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-// 终端字号偏好：仅保存在浏览器 localStorage（不持久化到后端）
+// 终端偏好（字号 / 字体）：仅保存在浏览器 localStorage（不持久化到后端）
 const FONT_KEY = 'terminal-font-size'
+// 终端字体：内置 Maple Mono（默认）或系统等宽字体栈
+export const FONT_FAMILY_KEY = 'terminal-font-family'
+export type TerminalFont = 'maple' | 'system'
 const FONT_MIN = 10
 const FONT_MAX = 26
 const FONT_DEFAULT = 16
@@ -21,8 +24,20 @@ export const useSettingsStore = defineStore('settings', () => {
     localStorage.setItem(FONT_KEY, String(fontSize.value))
   }
 
+  // 终端字体：默认内置 Maple Mono；只有显式存过 'system' 才用系统字体
+  const terminalFont = ref<TerminalFont>(
+    localStorage.getItem(FONT_FAMILY_KEY) === 'system' ? 'system' : 'maple'
+  )
+
+  function setTerminalFont(v: TerminalFont) {
+    terminalFont.value = v === 'system' ? 'system' : 'maple'
+    localStorage.setItem(FONT_FAMILY_KEY, terminalFont.value)
+  }
+
   return {
     fontSize,
-    setFontSize
+    terminalFont,
+    setFontSize,
+    setTerminalFont
   }
 })
