@@ -4,10 +4,13 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // wsAcceptKey computes the Sec-WebSocket-Accept value for a handshake key.
@@ -18,6 +21,13 @@ func wsAccept(key string) string {
 }
 
 const (
+	// wsCloseTaken 是「会话被其他设备接管」的 WebSocket 关闭码（4000–4999 为应用自定
+	// 区间）。前端据此把标签置为 detached：显示提示、不自动重连（否则两台设备会互抢）。
+	wsCloseTaken = 4001
+	// oscDetached 是顶号通知（OSC 控制帧，不写入 PTY）。与 close 帧双保险：
+	// 帧先到 → 立即提示；帧被代理吞掉时还能靠 close 码判定。
+	oscDetached = "\x1b]detached\x07"
+
 	opText  = 0x1
 	opBin   = 0x2
 	opCont  = 0x0
@@ -41,6 +51,23 @@ func wsFrame(op byte, payload []byte) []byte {
 		hdr = append(hdr, b[:]...)
 	}
 	return append(hdr, payload...)
+}
+
+// wsCloseFrame 构造服务端 close 帧：payload = 2 字节状态码 + UTF-8 reason。
+func wsCloseFrame(code uint16, reason string) []byte {
+	payload := make([]byte, 2+len(reason))
+	binary.BigEndian.PutUint16(payload, code)
+	copy(payload[2:], reason)
+	return wsFrame(opClose, payload)
+}
+
+// kickDetached 通知被顶掉的旧连接：先发 \x1b]detached\x07，再发 close(4001)，最后关闭。
+// 写带 1s 超时：旧连接 TCP 缓冲可能已满，绝不能让这次写阻塞拖住新设备的挂载。
+func kickDetached(c net.Conn) {
+	_ = c.SetWriteDeadline(time.Now().Add(time.Second))
+	_, _ = c.Write(wsFrame(opText, []byte(oscDetached)))
+	_, _ = c.Write(wsCloseFrame(wsCloseTaken, "detached"))
+	_ = c.Close()
 }
 
 // wsReadFrame reads a single client frame, unmasking the payload. It returns
@@ -147,7 +174,7 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		conn.Write(wsFrame(opText, []byte("\x1b]id;"+s.id+"\x07")))
-		if aerr := s.attach(conn); aerr != nil {
+		if _, aerr := s.attach(conn); aerr != nil {
 			conn.Close()
 			return
 		}
@@ -160,9 +187,14 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			conn.Close()
 			return
 		}
-		if aerr := s.attach(conn); aerr != nil {
+		// 单挂载点：挂载成功即成为操作端，旧连接被顶掉并收到「已被接管」通知。
+		prev, aerr := s.attach(conn)
+		if aerr != nil {
 			conn.Close()
 			return
+		}
+		if prev != nil {
+			kickDetached(prev)
 		}
 	}
 
@@ -193,7 +225,8 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					rows, err2 := strconv.Atoi(parts[1])
 					if err1 == nil && err2 == nil && cols > 0 && rows > 0 {
 						if sess, ok := t.mgr.get(id); ok {
-							if err := sess.resize(uint16(cols), uint16(rows)); err != nil {
+							// 只有操作端的尺寸生效（被顶掉的旧设备会随后触发一次重排）
+							if err := sess.resize(conn, uint16(cols), uint16(rows)); err != nil && !errors.Is(err, errNotOwner) {
 								logger().Printf("[terminal] resize error: %v", err)
 							}
 						}
@@ -203,7 +236,10 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// 心跳：仅保持连接不被代理/NAT 空闲超时断开，不写入 PTY
 			} else {
 				if sess, ok := t.mgr.get(id); ok {
-					sess.writeInput(msgBuf)
+					// 非操作端的残留输入在服务端丢弃（见 Session.writeInput 的说明）
+					if werr := sess.writeInput(conn, msgBuf); werr != nil && !errors.Is(werr, errNotOwner) {
+						logger().Printf("[terminal] write input error: %v", werr)
+					}
 				}
 			}
 		case opPing:

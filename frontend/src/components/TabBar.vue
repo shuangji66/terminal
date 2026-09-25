@@ -240,7 +240,7 @@ function titleOf(uid: string): string {
             :class="
               tab.status === 'open'
                 ? 'bg-success'
-                : tab.status === 'connecting' || tab.restoring
+                : tab.status === 'connecting' || tab.restoring || tab.status === 'detached'
                   ? 'bg-warning'
                   : 'bg-danger'
             "

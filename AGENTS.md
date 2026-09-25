@@ -49,11 +49,14 @@
   否则 attach 回放 / history API 读会 EBADF）；`resolveRunUser` 解析 `user=` 参数与
   `X-Trim-Userid` 头（root / `app:<APP NAME>` 应用用户 / 指定 uid / NAS 用户；
   应用名非法或解析失败会**返回错误**，不再静默回退），非当前 uid 用 `syscall.Credential`
-  切换用户；`attach` 在 `histMu` 内“回放历史 + 接管实时流”，保证字节不重不漏；
+  切换用户；`attach` 在 `histMu` 内“回放历史 + 接管实时流”，保证字节不重不漏，并返回
+  **被顶掉的旧连接**（单挂载点，见第 5 节）；`writeInput`/`resize` 只接受当前操作端的请求
+  （`isOwner`，非操作端返回 `errNotOwner`）；
   pump 协程持续读 PTY → 追加历史文件 + 广播到已挂载连接。
 - `terminal.go` — WS 握手（自实现帧编解码）→ `id` 为空则新建（先发 `\x1b]id;<id>\x07`）
   或 `attach`（回放 + `\x1b]ready\x07`）；OSC 控制消息：`resize` / `ping` 不进 PTY；
-  客户端断开**只解挂载不杀会话**。
+  客户端断开**只解挂载不杀会话**；挂载成功即成为唯一操作端，旧连接由 `kickDetached`
+  （`\x1b]detached\x07` + WS close 4001）通知并关闭。
 - `quickcmds.go` — 快捷指令整体保存（tmp + rename 原子写，兼容旧版裸数组格式）。
 - `apps.go` — 应用用户（NAS 应用）支持：执行 `appcenter-cli list` 解析 **APP NAME**，
   过滤 `trim.*` 系统软件与「无同名系统用户 / 家目录不存在」的应用，按名排序后供
@@ -75,7 +78,9 @@
   `truncate`）、桌面功能名（`labelsOn` 控制显示；《》手动折叠/展开 + 溢出自动收起）、
   移动端第二行功能键；**每次新建前一律弹 `UserPickDialog`** 选择会话用户（登录用户 /
   ROOT / 应用用户，两个常规选项必须在列表上方）。
-- `TerminalPane.vue` — 每个标签一个 xterm 实例 + WS；xterm v6 + addons（fit/webgl/
+- `TerminalPane.vue` — 每个标签一个 xterm 实例 + WS（**单挂载点**：被其他设备接管时进入
+  `detached` 状态——`markDetached()` 置状态、写提示行、弹 toast、`connected=false`，
+  **不自动重连**，用户点「重连」即显式夺回）；xterm v6 + addons（fit/webgl/
   search/web-links/clipboard/unicode11/serialize/image）；主题（深色黑底绿字 / 浅色米白
   黑字）、字号（来自 settings store）动态应用；会话控制帧处理（`\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07`）；搜索悬浮框；鼠标选中自动复制（桌面端）；
@@ -149,7 +154,13 @@
    终端内的复制走 xterm 自绘选区（不依赖原生选择），**不要**为了「能选中」把
    `user-select: text` 加回 `.xterm` 及其祖先/后代——那会在 DOM 渲染器下产生
    「原生高亮 + xterm 选区」双重高亮；表单控件那条也不能删，否则输入框无法编辑。
-10. **前端资源缓存头只在 `serveBytes` 设**：`index.html`（含 SPA 回退）必须
+10. **一个会话同时只有一个操作端（单挂载点，语义不可回归）**：后端 `Session.conn` 就是
+   唯一挂载点，`attach` 换主并返回旧连接，handler 用 `kickDetached` 通知旧端
+   （`\x1b]detached\x07` + close 4001）；被顶掉端的输入/尺寸在服务端被丢弃。
+   前端收到后进 `detached` 状态（提示 + **不自动重连**，否则两端会互相顶号），
+   点「重连」= 显式夺回。**只影响这一个会话**：其他会话的 WS 一律不动。
+   不要改成「多端同时挂载」，也不要给 detached 加自动重连。
+11. **前端资源缓存头只在 `serveBytes` 设**：`index.html`（含 SPA 回退）必须
    `no-cache`（运行时才注入 `<base href>`），`assets/**` 强缓存 `immutable`。
    不要给 index.html 加长缓存，也不要把缓存头搬到 socket/反代层去配死。
 
@@ -287,7 +298,17 @@
   `/tmp/imerepro/harness.mjs`，未入库）；沙箱里 `/dev/ptmx` 不可用，PTY 建不起来，端到端
   只能验到 API 层。
 - **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
-  `\x1b]ready\x07` / `\x1b]exit\x07` 均为前后端约定的 OSC 控制序列。
+  `\x1b]ready\x07` / `\x1b]exit\x07` / `\x1b]detached\x07` 均为前后端约定的 OSC 控制序列。
+- **单挂载点（一个会话只在一台设备上进行）**：`Session.attach()` 先回放历史+发 ready，
+  再在 `histMu`/`connMu` 内**原子换主**并返回旧连接；`terminal.go` 的 `kickDetached()`
+  给旧连接发 `\x1b]detached\x07`（先）与 **close 码 4001**（后，双保险，帧被代理吞掉也能
+  靠码判定），写带 1s 超时——旧连接 TCP 缓冲可能已满，**绝不能让这次写阻塞新端的挂载**。
+  前端 `detached` 状态**不自动重连**（否则两端互抢），「重连」= 夺回。
+  顶号只作用于该会话：同一设备上其他标签的 WS 不受影响。
+  验证方式：`net.Pipe` 单测 attach/isOwner/detach 语义 + 假 WS 后端（Node，实现同样的
+  顶号协议）+ 两个浏览器上下文端到端跑「A 打开 → B 打开顶掉 A → A 不自动重连 →
+  A 点重连只夺回被点的那个会话」；沙箱里 PTY 建不起来（`open /dev/ptmx: permission denied`），
+  真会话只能部署后真机验证。
 - **标签上的用户标注（`终端N:<用户>`）**：默认标题 = `t('tab_placeholder_user')`，用户显示名
   由 `Tab.userLabel` 提供——新建标签时用 `sessions.labelForSpec(spec)`（`root` / `app:<APP NAME>`
   取 APP NAME / `nas` 取 `/api/info` 的 `nasUser.username`），**恢复的标签用后端

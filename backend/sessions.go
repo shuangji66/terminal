@@ -55,6 +55,10 @@ type Session struct {
 	closed bool
 }
 
+// errNotOwner：请求来自已不是操作端的连接（已被其他设备顶掉的旧连接）。
+// 上层据此静默忽略：它只是残留帧，不是错误。
+var errNotOwner = errors.New("not session owner")
+
 // runUser 描述一次会话要切换到的目标用户（uid/gid/home/name）。
 type runUser struct {
 	uid      int
@@ -203,7 +207,11 @@ func (s *Session) pump() {
 // attach 把连接挂载到会话：先回放历史文件内容（上限 maxHistoryBytes，分帧发送），
 // 再发送 ready 标记，最后接管实时流。整段在 histMu 内完成，防止新增输出既被回放
 // 又被实时广播造成重复。
-func (s *Session) attach(c net.Conn) error {
+//
+// **单挂载点语义**：一个会话在任何时刻只允许一个操作端（能写输入、能改 PTY 尺寸）。
+// 挂载成功即成为操作端，返回值是**被顶掉的旧连接**（无则 nil），由调用方负责通知并
+// 关闭它（terminal.go 的 kickDetached）——只影响这一个会话，其他会话的连接不动。
+func (s *Session) attach(c net.Conn) (net.Conn, error) {
 	s.markActive()
 	s.histMu.Lock()
 	defer s.histMu.Unlock()
@@ -220,7 +228,7 @@ func (s *Session) attach(c net.Conn) error {
 					n, rerr := s.hist.Read(chunk)
 					if n > 0 {
 						if _, werr := c.Write(wsFrame(opText, chunk[:n])); werr != nil {
-							return werr
+							return nil, werr
 						}
 					}
 					if rerr != nil {
@@ -231,12 +239,24 @@ func (s *Session) attach(c net.Conn) error {
 		}
 	}
 	if _, err := c.Write(wsFrame(opText, []byte("\x1b]ready\x07"))); err != nil {
-		return err
+		return nil, err
 	}
+	// 换主与历史回放同处一个 histMu 临界区：新连接既不漏字节，也不与广播交叉。
 	s.connMu.Lock()
+	prev := s.conn
 	s.conn = c
 	s.connMu.Unlock()
-	return nil
+	if prev == c {
+		prev = nil // 重复挂载同一连接：无需顶号
+	}
+	return prev, nil
+}
+
+// isOwner 判断该连接是否仍是会话的操作端（被顶掉的旧连接为 false）。
+func (s *Session) isOwner(c net.Conn) bool {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	return s.conn != nil && s.conn == c
 }
 
 // detach 解除当前连接挂载（不杀会话，会话继续运行并写入历史文件）。
@@ -248,15 +268,24 @@ func (s *Session) detach(c net.Conn) {
 	s.connMu.Unlock()
 }
 
-// writeInput 把客户端输入写入 PTY。
-func (s *Session) writeInput(p []byte) error {
+// writeInput 把客户端输入写入 PTY。**只有当前操作端能写**：被顶掉的旧连接即使还有
+// 残留帧抵达，也在服务端被丢弃——否则两台设备会同时操作同一个 PTY（两边都能打字，
+// 却只有一边看得到输出）。
+func (s *Session) writeInput(c net.Conn, p []byte) error {
+	if !s.isOwner(c) {
+		return errNotOwner
+	}
 	s.markActive()
 	_, err := s.pty.Write(p)
 	return err
 }
 
-// resize 调整 PTY 尺寸。
-func (s *Session) resize(cols, rows uint16) error {
+// resize 调整 PTY 尺寸。同样只接受操作端的请求：被顶掉的旧设备随后会触发一次
+// 尺寸重排，若不加限制就会把 PTY 改成它自己的窗口大小。
+func (s *Session) resize(c net.Conn, cols, rows uint16) error {
+	if !s.isOwner(c) {
+		return errNotOwner
+	}
 	return pty.Setsize(s.pty, &pty.Winsize{Cols: cols, Rows: rows})
 }
 

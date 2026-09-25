@@ -3,7 +3,9 @@ import { ref, computed } from 'vue'
 import { api, type RuntimeInfo, type UserSpec } from '@/serverapi'
 import { t } from '@/i18n'
 
-export type TabStatus = 'connecting' | 'open' | 'exited' | 'error'
+// 'detached'：该会话已被其他设备接管（单挂载点语义）——只解挂载，会话仍在服务端运行；
+// 本端不自动重连，用户点「重连」即可显式夺回。
+export type TabStatus = 'connecting' | 'open' | 'exited' | 'error' | 'detached'
 
 export interface Tab {
   uid: string // 前端稳定标识（标签状态机的本地主键）

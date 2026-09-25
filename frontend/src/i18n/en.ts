@@ -16,9 +16,11 @@ export const en: Record<string, string> = {
   conn_connected: 'Connected',
   conn_exited: 'Exited',
   conn_error: 'Connection error',
-  conn_closed: 'Connection closed',
+  conn_closed: 'Connection closed. Reconnect or refresh to continue',
+  conn_detached: 'Session opened on another device',
+  conn_detached_hint: 'This session is now open on another device. Click Reconnect to continue here.',
   conn_not_found: 'Session not found',
-  ws_error: 'WebSocket error.',
+  ws_error: 'WebSocket error, or closed by fnOS',
   session_exited_hint: 'Process exited. Click Reconnect to view output.',
   reconnect_hint: 'Click Reconnect to re-establish the connection',
 

@@ -3,6 +3,9 @@
 // - 已有会话 id：后端在挂载时自动回放历史（→ \x1b]ready\x07），再进入实时流
 // - 新会话（无 id）：后端回 \x1b]id;<id>\x07 控制帧回填会话 id
 // - 浏览器断开只解挂载、不杀会话；「重连」重新挂载并再次回放历史
+// - **单挂载点**：一个会话同时只有一个操作端。本端被其他设备接管时，后端发
+//   \x1b]detached\x07 并以 WS close 4001 关闭连接 → 本标签进入 detached 状态
+//   （提示 + 不自动重连，避免两台设备互相顶号）；用户点「重连」= 显式夺回。
 import { onMounted, onBeforeUnmount, ref, computed, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -19,7 +22,14 @@ import { useSessionsStore, type Tab } from '@/stores/sessions'
 import { usePaneControlsStore } from '@/stores/paneControls'
 import { useToastStore } from '@/stores/toast'
 import { useSettingsStore } from '@/stores/settings'
-import { wsUrl, resizePayload, HEARTBEAT_PAYLOAD, api } from '@/serverapi'
+import {
+  wsUrl,
+  resizePayload,
+  HEARTBEAT_PAYLOAD,
+  DETACHED_PAYLOAD,
+  WS_CLOSE_DETACHED,
+  api
+} from '@/serverapi'
 import KeypadBar from './KeypadBar.vue'
 
 const props = defineProps<{
@@ -253,6 +263,11 @@ function handleData(raw: string) {
     }
     return ''
   })
+  // 被其他设备接管：用常量做纯字符串匹配（帧本身含 ESC/]，不必拼正则）
+  if (rest.includes(DETACHED_PAYLOAD)) {
+    rest = rest.split(DETACHED_PAYLOAD).join('')
+    markDetached()
+  }
   rest = rest.replace(/\x1b\]exit\x07/g, () => {
     const c = myCtl()
     if (c) c.exited = true
@@ -269,6 +284,24 @@ function handleData(raw: string) {
     term?.write(rest)
     scrollToBottom()
   }
+}
+
+// ---------- 被其他设备接管（单挂载点） ----------
+// 只解挂载、不杀会话（会话继续在服务端运行并写历史文件），且**不自动重连**：
+// 自动抢回会让两台设备来回顶号。用户点「重连」才夺回。
+let detachedNotified = false
+
+function markDetached() {
+  if (detachedNotified) return
+  detachedNotified = true
+  stopHeartbeat()
+  const c = myCtl()
+  if (c) c.connected = false
+  if (disposed) return
+  store.setTabStatus(props.tab.uid, 'detached')
+  term?.writeln('\r\n\x1b[33m' + t('conn_detached_hint') + '\x1b[0m')
+  scrollToBottom()
+  toast.show(t('conn_detached'), 'error')
 }
 
 // ---------- WebSocket 会话 ----------
@@ -293,6 +326,7 @@ function openSocket() {
   // 新连接对应新的 PTY（或重挂载的旧 PTY），上次下发的尺寸不再成立，需重新下发
   lastSentCols = 0
   lastSentRows = 0
+  detachedNotified = false // 重新挂载即视为重新参与（可能是一次显式夺回）
   // 新建会话（无 id）时按本标签的 userSpec 决定运行用户：
   // root → user=root；app:<APP NAME> → user=app:<APP NAME>（NAS 应用用户）；
   // nas（默认）→ 不带 user 参数，后端读网关 X-Trim-Userid。
@@ -313,10 +347,16 @@ function openSocket() {
     const data = typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data)
     handleData(data)
   }
-  sock.onclose = () => {
+  sock.onclose = (ev: CloseEvent) => {
     stopHeartbeat()
     const c = myCtl()
     if (c) c.connected = false
+    // 被其他设备接管：后端会先发 \x1b]detached\x07 再带这个关闭码（帧可能被代理吞掉，
+    // 所以这里按码兜底），统一走 detached 分支，不打印通用的「连接已关闭」。
+    if (ev?.code === WS_CLOSE_DETACHED) {
+      markDetached()
+      return
+    }
     if (recreateOnClose) {
       // 旧会话已不存在：自动重建新会话
       recreateOnClose = false

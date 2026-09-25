@@ -16,9 +16,11 @@ export const zh: Record<string, string> = {
   conn_connected: '已连接',
   conn_exited: '已退出',
   conn_error: '连接错误',
-  conn_closed: '连接已关闭',
+  conn_closed: '连接已关闭，重连或刷新后继续',
+  conn_detached: '会话已在其他设备打开',
+  conn_detached_hint: '该会话已在其他设备打开，点击「重连」可在此设备继续。',
   conn_not_found: '会话不存在',
-  ws_error: 'WebSocket 错误。',
+  ws_error: 'websocket 错误或被飞牛关闭',
   session_exited_hint: '进程已退出，点击「重连」可重新查看输出。',
   reconnect_hint: '点击「重连」重新建立连接',
 

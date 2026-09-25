@@ -44,6 +44,11 @@ export function resizePayload(cols: number, rows: number): string {
 }
 export const HEARTBEAT_PAYLOAD = '\x1b]ping\x07'
 
+// 会话被其他设备接管时，后端先发该控制帧再以 WS_CLOSE_DETACHED 关闭连接（双保险）。
+export const DETACHED_PAYLOAD = '\x1b]detached\x07'
+// 「已被其他设备接管」的 WebSocket 关闭码（与 backend/terminal.go 的 wsCloseTaken 对应）
+export const WS_CLOSE_DETACHED = 4001
+
 export interface QuickCmd {
   id: string
   name: string
