@@ -244,7 +244,6 @@ func usableAppUsers(renv *RuntimeEnv, raw []appEntry) []appEntry {
 		}
 		seen[name] = true
 		if _, err := resolveAppRunUser(renv, name); err != nil {
-			logger().Printf("[apps] skip %q in picker: %v", name, err)
 			continue
 		}
 		display := strings.TrimSpace(a.DisplayName)

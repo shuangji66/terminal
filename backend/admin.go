@@ -343,6 +343,5 @@ func serveAdminSocket(m *AdminMux) error {
 		<-stopCh
 		srv.Close()
 	}()
-	logger().Printf("terminal listening on unix socket %s baseurl %q", renv.AdminSock, renv.AdminBaseURL)
 	return srv.Serve(ln)
 }

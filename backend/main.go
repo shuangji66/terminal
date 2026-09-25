@@ -31,7 +31,7 @@ func netListen(network, addr string) (net.Listener, error) {
 
 func main() {
 	renv := loadRuntimeEnv()
-	logger().Printf("terminal backend starting (version=%s pid=%d)", renv.Version, os.Getpid())
+	// 日志纪律：只记录异常/失败（见 AGENTS.md），启动/停止这类例行信息不再输出。
 
 	// 准备目录：会话临时目录（应用停止时整目录清除）与快捷指令文件所在目录
 	createdSessionDir := false
@@ -64,10 +64,8 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	select {
-	case s := <-sig:
-		logger().Printf("received signal %v, shutting down", s)
+	case <-sig:
 	case <-stopCh:
-		logger().Printf("shutdown requested, stopping")
 	}
 
 	// 优雅退出：终止所有会话进程 → 删除临时会话目录
@@ -76,5 +74,4 @@ func main() {
 	if createdSessionDir {
 		os.RemoveAll(renv.SessionDir)
 	}
-	logger().Printf("terminal backend stopped")
 }

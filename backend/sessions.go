@@ -389,7 +389,6 @@ func (m *SessionManager) create(runAs *runUser) (*Session, error) {
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
-	logger().Printf("[terminal] session %s started (shell=%s user=%s uid=%d home=%s)", id, m.renv.Shell, runAs.username, runAs.uid, runAs.home)
 	return s, nil
 }
 
@@ -477,7 +476,6 @@ func (m *SessionManager) closeByID(id string) error {
 		return errors.New("session not found")
 	}
 	err := s.close()
-	logger().Printf("[terminal] session %s closed", id)
 	return err
 }
 

@@ -198,7 +198,13 @@
    前端收到后进 `detached` 状态（提示 + **不自动重连**，否则两端会互相顶号），
    点「重连」= 显式夺回。**只影响这一个会话**：其他会话的 WS 一律不动。
    不要改成「多端同时挂载」，也不要给 detached 加自动重连。
-11. **前端资源缓存头只在 `serveBytes` 设**：`index.html`（含 SPA 回退）必须
+11. **后端日志只在异常/失败时输出（用户明确要求安静）**：`logger().Printf` 只用于
+    失败/降级/权限类信息（建目录失败、socket 被占用、admin server 报错、chmod 失败、
+    `appcenter-cli list` 失败回退目录扫描、resize/写入报错…）。**不要再加生命周期或
+    例行信息日志**：启动横幅（version/pid）、`listening on unix socket … baseurl …`、
+    每个被过滤应用的 `skip … in picker`、`session … started/closed`、收到信号/停止——
+    这些都已经删过一轮，别加回来。排查问题请临时加日志，而不是常驻 Printf。
+12. **前端资源缓存头只在 `serveBytes` 设**：`index.html`（含 SPA 回退）必须
    `no-cache`（运行时才注入 `<base href>`），`assets/**` 强缓存 `immutable`。
    不要给 index.html 加长缓存，也不要把缓存头搬到 socket/反代层去配死。
 
