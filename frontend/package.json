@@ -10,6 +10,7 @@
     "type-check": "vue-tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@automann/maple-mono-cn": "7.9.2",
     "@xterm/addon-clipboard": "0.2.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-image": "0.9.0",

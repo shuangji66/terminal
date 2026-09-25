@@ -29,6 +29,11 @@
 - **版本号经 `-ldflags` 注入**（`make release V=x.y.z` / `-X main.terminalVersion=`），
   不要改代码常量。
 - 后端 `go clean -cache` 在每次构建前执行，是刻意行为（保证 embed 资产被编译进去）。
+- **终端字体是内置资产**：`@automann/maple-mono-cn`（**只 import `regular.css` = Regular 400**）
+  经 Vite 打进 `dist/assets/*.woff2`（约 220 个 unicode-range 切片、合计 ~9.4MB），
+  因此 `dist` 约 11MB、最终二进制约 20MB，别再往里加字重（每加一个字重 +~9MB）。
+  界面**不再从 CDN 拉字体**（index.html 里那几条 Google Fonts / Fontshare 链接已删除，
+  不要加回来）；非终端区域一律用系统字体栈。
 
 ---
 
@@ -78,6 +83,9 @@
   `truncate`）、桌面功能名（`labelsOn` 控制显示；《》手动折叠/展开 + 溢出自动收起）、
   移动端第二行功能键；**每次新建前一律弹 `UserPickDialog`** 选择会话用户（登录用户 /
   ROOT / 应用用户，两个常规选项必须在列表上方）。
+- 字体：`style.css` 的 `--font-sans/--font-display/--font-mono` **全是系统字体栈**（不再有
+  DM Sans / General Sans / JetBrains Mono 这些 CDN 字体）；终端字体是常量
+  `TERMINAL_FONT_FAMILY`（`"Maple Mono CN"` + 系统等宽兜底），只在 `TerminalPane` 里用。
 - `TerminalPane.vue` — 每个标签一个 xterm 实例 + WS（**单挂载点**：被其他设备接管时进入
   `detached` 状态——`markDetached()` 置状态、写提示行、弹 toast、`connected=false`，
   **不自动重连**，用户点「重连」即显式夺回）；xterm v6 + addons（fit/webgl/
@@ -125,6 +133,9 @@
   （`composables/useKeypadHeight.ts`）把自己的实测高度写进 `--keypad-h`，并用
   ResizeObserver 跟踪（键盘弹起会改 padding-bottom）；卸载后 nextTick 再同步一次
   （多实例：每个标签一个键条，先卸载的那个不能直接把变量清零）。
+- `main.ts` — 入口：`import '@automann/maple-mono-cn/regular.css'`（内置终端字体）+
+  `document.fonts.load('16px "Maple Mono CN"', 'Aa中0')` 提前预热（App 挂载/会话恢复/握手
+  期间通常已就绪）。**终端字体只在这里 import 一次**，别在别处再引其它字重。
 - `composables/useKeypadPage.ts` — 辅助键条的**当前页**（0/1）与翻页 `step(±1)`；
   `step` **夹取不循环**（到边界即停）；模块级共享，所有标签的键条同步同一页。
 - `composables/useMobileLayout.ts` — 两个布局判据：
@@ -285,10 +296,10 @@
      10~30px 时组件判「拖动」不聚焦、xterm 判 tap 不滚动，谁都不聚焦、键盘弹不出来。
   4) **聚焦一律走 `focusTerm()` 而非直接 `term.focus()`**：`term.open()` 之前
      `.xterm-helper-textarea` 不存在，xterm 内部 `if (this.textarea)` 直接返回，这次聚焦
-     被静默丢弃——表现为「首次点终端没反应，再点一次才行」。`open()` 已提前到挂载时
-     同步执行（终端字体是系统等宽栈，不含 webfont，测量不受 `document.fonts.ready`
-     影响），`focusTerm()` 仍保留 `pendingFocus` 兜底。所有调用点（触摸/辅助键/粘贴/
-     关闭搜索/标签激活/paneControls.focus）都已统一。
+     被静默丢弃——表现为「首次点终端没反应，再点一次才行」。`open()` 现在要等内置终端
+     字体就绪（见下方「终端用的是内置 webfont」），等待窗口靠 `pendingFocus` 兜底
+     （`focusTerm()` 保留该机制，所有调用点：触摸/辅助键/粘贴/关闭搜索/标签激活/
+     paneControls.focus 都已统一）。
   5) **长按选词无论命中与否都必须聚焦**：`handleLongPress` 命中单词时只 `select()`
      不聚焦 → 焦点停 BODY、键盘拉不起来；恢复的标签满屏文字落点必中单词，新建标签
      空白屏落点无词——正是「只有恢复的标签不行，新建标签正常」的成因。
@@ -324,6 +335,18 @@
   `.xterm-helper-textarea` 上派发合成事件序列并读回 `send()` 的内容（本次排查脚本临时放在
   `/tmp/imerepro/harness.mjs`，未入库）；沙箱里 `/dev/ptmx` 不可用，PTY 建不起来，端到端
   只能验到 API 层。
+- **终端用的是内置 webfont，`open()` 前必须等它就绪（xterm 不会自己重测）**：
+  `waitTerminalFont()` 在 `term.open()` 前 `await document.fonts.load(<size>px "Maple Mono CN", 'Aa中0')`
+  （带 `FONT_WAIT_MS = 800` 兜底）。原因：**xterm 只在 `open()` 里量一次字符尺寸**
+  （`_charSizeService.measure()`），那一刻若还在用兜底字体，算出的行列与 Maple 真实字宽不符
+  （渲染错位 + 下发给 PTY 的 cols/rows 也是错的）。xterm **不监听 `document.fonts`**，
+  所以只能自己等。等待期变长会放大「open() 之前点终端 → focus 被丢弃」的老问题，
+  靠既有的 `pendingFocus` 兜底，别把等待调长。字体迟到（超时）时用
+  `document.fonts.ready` + **换一个等价但字符串不同的 fontFamily**（`TERMINAL_FONT_FAMILY_RETRY`：
+  家族名不带引号）强制重测——xterm 的 OptionsService 有 `rawOptions[k] !== v` 判等，
+  **重复赋同一个字符串不会触发 `measure()`**，这也是别用「重新赋相同值」当解法更新的原因。
+  实测证据（Playwright，`?nogl=1` 走 DOM 渲染器读 `.xterm-rows` 行高）：行高 21px = Maple 的
+  21px（兜底字体是 22px），26px 下 35px = Maple 的 35px。
 - **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07` / `\x1b]detached\x07` 均为前后端约定的 OSC 控制序列。
 - **单挂载点（一个会话只在一台设备上进行）**：`Session.attach()` 先回放历史+发 ready，

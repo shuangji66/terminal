@@ -62,6 +62,8 @@
   终端字号（左减右加 10–26，默认 16，存浏览器 localStorage 即时生效）；
   末尾「关于」：标题与「设置」标题同样式，右侧仅一个 GitHub 图标入口（点击新标签打开）。
   弹窗在终端区域内垂直居中，高度上限同为终端区域的 90%。
+- **终端字体** — 终端内容使用内置的 **Maple Mono CN**（Regular 400，按 unicode-range 分片
+  按需加载，字体随二进制一起分发、不访问任何 CDN）；界面其余部分一律系统字体。
 - **终端配色** — 深色模式黑底绿字（绿色略暗淡，`#2bd957`）；浅色模式米白底黑字；
   顶栏浅色为温和白色，与终端米白错开。
 - **移动端辅助功能键** — 两页胶囊按键条：
@@ -112,6 +114,7 @@
 | 后端 | Go ≥ 1.27（标准库 + `github.com/creack/pty`，按 uid 切换用户） |
 | 前端 | Vue 3.5（Composition API / `<script setup>`）+ TypeScript 6 + Vite 8 |
 | 前端构建 | Tailwind CSS v4（`@tailwindcss/vite`）、Pinia 4、xterm.js v6（fit/webgl/search/web-links/clipboard/unicode11/serialize/image） |
+| 字体 | **终端**：内置 `Maple Mono CN`（`@automann/maple-mono-cn`，仅 Regular 400，unicode-range 切片按需加载）；**界面**：系统字体栈，**不从 CDN 拉字体** |
 | 类型检查 | `npm run type-check`（`vue-tsc --noEmit`，覆盖 `.vue` 的 script 与 template + 全部 `.ts`；锁定 TypeScript 6.x，TS 7 与 vue-tsc 不兼容） |
 | 通信 | Unix Socket、HTTP JSON API、WebSocket（终端） |
 | 运行用户 | **root**（后端为 root 方可 setuid 以 NAS 用户/root 运行会话） |

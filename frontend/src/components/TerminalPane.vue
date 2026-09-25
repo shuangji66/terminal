@@ -436,7 +436,8 @@ function sendResize(cols: number, rows: number) {
 // 重排一次：只在尺寸稳定后调用，或标签激活 / 字号变化 / 连接建立等明确的单次场景。
 // fit() 内部在 cols/rows 变化时会 clear() 清屏并重建渲染模型，因此绝不能逐帧调用。
 function fitAndResize() {
-  if (!fitAddon || !term || !el.value) return
+  // open() 之前没有可用的渲染维度，fit() 只会抛错刷日志（字体等待期可能被 RO 触发）
+  if (!fitAddon || !term || !el.value || !termOpened) return
   try {
     const container = el.value
     if (container.clientWidth <= 0 || container.clientHeight <= 0) {
@@ -1015,13 +1016,43 @@ function installImeFallback() {
 }
 
 // ---------- 初始化 ----------
+// ---------- 终端字体（内置 Maple Mono CN，见 src/main.ts） ----------
+// 只内置 Regular 400；身后是系统等宽/中文兜底，供 Maple 未覆盖的字形（emoji 等）使用。
+const TERMINAL_FONT_FAMILY =
+  '"Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei", monospace'
+// 等价写法（家族名不带引号）：xterm 只在 fontFamily/fontSize 的**值发生变化**时才重新测量
+// 字符尺寸（OptionsService 里 `rawOptions[k] !== v && fire`），重复赋同一个字符串不会触发——
+// 字体迟到时靠它强制重测一次。
+const TERMINAL_FONT_FAMILY_RETRY = TERMINAL_FONT_FAMILY.replace('"Maple Mono CN"', 'Maple Mono CN')
+// 等字体的兜底时限：超时也先让终端可用，之后字体就绪时再重测一次（见下）
+const FONT_WAIT_MS = 800
+// 探测文本要同时覆盖 latin 与中文，才会把对应 unicode-range 切片都取回来
+const FONT_PROBE_TEXT = 'Aa中0'
+
+// 等终端字体就绪。**必须在 open() 之前**：xterm 只在 open() 里量一次字符尺寸，
+// 那一刻若还在用兜底字体，算出的行列数与 Maple 的真实字宽不符——渲染错位，
+// 下发给 PTY 的 cols/rows 也是错的。
+async function waitTerminalFont(size: number): Promise<boolean> {
+  if (typeof document === 'undefined' || !document.fonts) return true
+  const spec = `${size}px "Maple Mono CN"`
+  if (document.fonts.check(spec, FONT_PROBE_TEXT)) return true
+  const timeout = new Promise<boolean>((resolve) =>
+    window.setTimeout(() => resolve(false), FONT_WAIT_MS)
+  )
+  const loaded = document.fonts
+    .load(spec, FONT_PROBE_TEXT)
+    .then(() => true)
+    .catch(() => false)
+  const ok = await Promise.race([loaded, timeout])
+  return ok && document.fonts.check(spec, FONT_PROBE_TEXT)
+}
+
 function initTerminal() {
   if (!el.value || term) return
   term = new Terminal({
     cursorBlink: true,
     fontSize: settings.fontSize,
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei", "WenQuanYi Micro Hei", monospace',
+    fontFamily: TERMINAL_FONT_FAMILY,
     theme: isDark.value ? DARK_PALETTE : LIGHT_PALETTE,
     scrollback: 2000,
     letterSpacing: 0,
@@ -1136,31 +1167,43 @@ function initTerminal() {
     console.warn('image addon:', e)
   }
 
-  // 立即 open()，不要等 document.fonts.ready：
-  //   1) 终端 fontFamily 是系统等宽字体栈（ui-monospace/Consolas/PingFang…），不含 webfont，
-  //      字符宽度测量不受 document.fonts.ready 影响——这个等待当初就不必要；
-  //   2) 更关键的是：open() 之前 .xterm-helper-textarea 不存在，`term.focus()` 会被 xterm
-  //      静默丢弃（内部 `if (this.textarea)` 直接返回），而用户「恢复会话后立刻点终端」
-  //      几乎必然落在这个窗口（fonts.ready 最坏等 800ms 兜底）→ 表现为「首次点终端没反应，
-  //      再点一次才行」。iOS 上补发无效（fonts.ready 回调不在用户手势内，无法弹键盘），
-  //      所以根治之道是让 open() 先于任何可能的轻触完成。
-  // fit 则照旧延到 rAF/尺寸稳定后执行（见 debouncedFit），测量与重排行为不变。
-  try {
-    term.open(el.value as HTMLElement)
-    termOpened = true
-  } catch (e) {
-    console.warn('term.open:', e)
-  }
-  // 必须在 term.open() 之后：.xterm-helper-textarea 由 open() 创建
-  installImeFallback()
-  // open() 之前若有轻触把聚焦意图挂起（理论上一帧内才可能），此刻立即补发
-  if (pendingFocus) {
-    pendingFocus = false
-    term.focus()
-  }
-  nextTick(() => {
-    requestAnimationFrame(() => fitAndResize())
-  })
+  // open() 要等终端字体就绪（见 waitTerminalFont）：终端字号 10–26px、字宽因字体而异，
+  // 拿兜底字体量出来的行列是错的。等待上限 FONT_WAIT_MS（字体已由 main.ts 预取，正常几乎
+  // 立即返回）；超时也照常 open()，随后字体真就绪时再强制重测一次。
+  //
+  // 注意窗口期变长带来的老问题：open() 之前 .xterm-helper-textarea 不存在，`term.focus()`
+  // 会被 xterm 静默丢弃（内部 `if (this.textarea)` 直接返回），表现为「首次点终端没反应，
+  // 再点一次才行」。这里沿用既有的 pendingFocus 机制（轻触先把意图挂起，open() 后立即补发）；
+  // iOS 上补发无效（回调不在用户手势内，弹不出键盘），所以字体等待必须短——FONT_WAIT_MS 兜底。
+  void (async () => {
+    const fontReady = await waitTerminalFont(settings.fontSize)
+    if (disposed || !term || !el.value) return
+    try {
+      term.open(el.value as HTMLElement)
+      termOpened = true
+    } catch (e) {
+      console.warn('term.open:', e)
+    }
+    // 必须在 term.open() 之后：.xterm-helper-textarea 由 open() 创建
+    installImeFallback()
+    // open() 之前若有轻触把聚焦意图挂起，此刻立即补发
+    if (pendingFocus) {
+      pendingFocus = false
+      term.focus()
+    }
+    nextTick(() => {
+      requestAnimationFrame(() => fitAndResize())
+    })
+    if (!fontReady) {
+      // 字体迟到：等它真正加载完成，用**不同的字符串**再赋一次同族字体以触发 xterm 重测，
+      // 然后按新字宽 fit（sendResize 只在 cols/rows 变化时下发，不会重复打扰 PTY）。
+      void document.fonts.ready.then(() => {
+        if (disposed || !term) return
+        term.options.fontFamily = TERMINAL_FONT_FAMILY_RETRY
+        requestAnimationFrame(() => fitAndResize())
+      })
+    }
+  })()
 
   if (window.ResizeObserver) {
     resizeObserver = new ResizeObserver(debouncedFit)

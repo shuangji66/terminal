@@ -10,3 +10,5 @@ terminal
 .gocache
 .gopath
 .gomod
+
+.npm*

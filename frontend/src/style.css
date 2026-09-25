@@ -29,10 +29,15 @@
   --color-ink-faint: #9c9c9c;
   --color-ink-faint-dark: #8a8a92;
 
-  /* 字体 */
-  --font-sans: 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-display: 'General Sans', 'DM Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* 字体：**全部使用系统字体**（不再从 Google Fonts / Fontshare 拉 webfont）。
+   * 唯一的例外是终端区域：那里的 xterm 用内置的 Maple Mono CN（见 src/main.ts 与
+   * TerminalPane 的 TERMINAL_FONT_FAMILY），不经过这几个变量。 */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-display: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono',
+    'Liberation Mono', 'Courier New', monospace;
 
   /* 投影：卡片悬浮 / 主按钮辉光 / 弹层 */
   --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.08);
