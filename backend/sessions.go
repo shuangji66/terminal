@@ -382,6 +382,7 @@ func (m *SessionManager) list() []sessionInfo {
 			CreatedAt:  s.createdAt.Format(time.RFC3339),
 			LastActive: s.lastActive.Format(time.RFC3339),
 			Exited:     s.isExited(),
+			User:       s.username,
 		}
 		s.histMu.Lock()
 		if s.hist != nil {

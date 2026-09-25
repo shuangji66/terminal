@@ -36,14 +36,14 @@
 
 **后端（Go，`backend/`）**
 
-- `main.go` — 入口：解析环境 → 建目录（会话临时目录、快捷指令/用户模式文件目录）→
+- `main.go` — 入口：解析环境 → 建目录（会话临时目录、快捷指令文件目录）→
   unix socket 监听 → 等信号优雅退出：终止全部会话、删 socket、**删除会话临时目录**。
 - `config.go` — `RuntimeEnv` 全部来自环境变量（`TERMINAL_ADMIN_SOCK/BASEURL`、
-  `QUICK_CMDS_FILE`、`SESSION_DIR`、`USER_MODE_FILE`、`APP_HOME_TEMPLATE`、
+  `QUICK_CMDS_FILE`、`SESSION_DIR`、`APP_HOME_TEMPLATE`、
   `APPCENTER_CLI`、`SHELL`、HOME/PATH/LANG）。
 - `admin.go` — Admin mux：`/api/*` 路由（info / sessions / apps / session /
-  session/clear / quickcmds / user-mode）+ SPA（baseurl 注入）+ WebSocket `/terminal`
-  分发。`/api/apps` 返回弹窗用的应用用户列表（含 `homeTemplate`，前端据此提示家目录，
+  session/clear / quickcmds）+ SPA（baseurl 注入 + `serveBytes` 逐类设 `Cache-Control`）
+  + WebSocket `/terminal` 分发。`/api/apps` 返回弹窗用的应用用户列表（含 `homeTemplate`，前端据此提示家目录，
   不硬编码路径）。
 - `sessions.go` — 会话管理：每个会话一个 PTY + 历史临时文件（**必须以 `O_RDWR` 打开**，
   否则 attach 回放 / history API 读会 EBADF）；`resolveRunUser` 解析 `user=` 参数与
@@ -55,7 +55,6 @@
   或 `attach`（回放 + `\x1b]ready\x07`）；OSC 控制消息：`resize` / `ping` 不进 PTY；
   客户端断开**只解挂载不杀会话**。
 - `quickcmds.go` — 快捷指令整体保存（tmp + rename 原子写，兼容旧版裸数组格式）。
-- `usermode.go` — 启动用户模式文件（`nas`|`root`|`custom`，非法回退 `nas`）。
 - `apps.go` — 应用用户（NAS 应用）支持：执行 `appcenter-cli list` 解析 **APP NAME**，
   过滤 `trim.*` 系统软件与「无同名系统用户 / 家目录不存在」的应用，按名排序后供
   `/api/apps` 返回；`resolveAppRunUser` 把 `app:<APP NAME>` 解析为 uid/gid/HOME
@@ -68,11 +67,14 @@
 
 - **强制 Composition API + `<script setup>` + TypeScript**。
 - `App.vue` — 壳：TabBar + 终端面板区（标签用 `visibility` 隐藏以保持尺寸/WS 存活）+
-  各弹窗（快捷指令 / 设置 / 确认）；启动顺序：`loadInfo` + `loadUserMode` →
-  （custom 模式预取一次应用用户列表，见第 5 节「应用用户列表缓存」）→ `restore`。
+  各弹窗（快捷指令 / 设置 / 确认）；启动顺序：`loadInfo` →（预取一次应用用户列表，见第 5 节
+  「应用用户列表缓存」）→ `restore`。**用户不再有全局「启动用户模式」**：`restore` 在无会话
+  可恢复时固定以当前登录用户（`nas`）建立会话；新建标签时的用户选择见 `TabBar`。
 - `TabBar.vue` — 顶栏：新建（常驻左侧）、标签条（拖拽/滚轮横滚、双击重命名、常驻
-  关闭按钮）、桌面功能名（`labelsOn` 控制显示；《》手动折叠/展开 + 溢出自动收起）、
-  移动端第二行功能键；custom 模式新建前弹 `UserPickDialog`。
+  关闭按钮；**标签宽度随标题文本自适应**，只用 `max-w-[220px] sm:max-w-[280px]` 兜底 +
+  `truncate`）、桌面功能名（`labelsOn` 控制显示；《》手动折叠/展开 + 溢出自动收起）、
+  移动端第二行功能键；**每次新建前一律弹 `UserPickDialog`** 选择会话用户（登录用户 /
+  ROOT / 应用用户，两个常规选项必须在列表上方）。
 - `TerminalPane.vue` — 每个标签一个 xterm 实例 + WS；xterm v6 + addons（fit/webgl/
   search/web-links/clipboard/unicode11/serialize/image）；主题（深色黑底绿字 / 浅色米白
   黑字）、字号（来自 settings store）动态应用；会话控制帧处理（`\x1b]id;` /
@@ -102,10 +104,11 @@
   `.app-shell` 的 `top`）、`--kb-safe-bottom`（键盘弹起时 0，覆盖键条的安全区内边距）、
   `--tabbar-h`（**实测**顶栏高度，见第 5 节「浮层与终端区域对齐」）。
   不用 `100dvh` 的原因见第 5 节「虚拟键盘适配」。
-- `stores/` — `sessions`（标签 + userSpec + 恢复/关闭）、`settings`（用户模式 + 字号，
-  字号存 localStorage）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
+- `stores/` — `sessions`（标签 + userSpec + userLabel + 恢复/关闭；默认标题为
+  `终端N:<用户>`，见第 5 节「标签上的用户标注」）、`settings`（仅终端字号，
+  存 localStorage）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
   顶栏按钮通过激活 uid 解析，避免后台标签覆盖）、`appUsers`（应用用户列表**内存缓存**，
-  仅 custom 模式冷启动预取一次，见第 5 节「应用用户列表缓存」）。
+  冷启动预取一次，见第 5 节「应用用户列表缓存」）。
 - `serverapi/index.ts` — `runtimeBase()` / `wsUrl(id?, user?)` / `api.*`。
 - `i18n/zh.ts` `en.ts` — 文案集中管理；`composables/useTheme.ts` `useI18n.ts`。
 
@@ -116,10 +119,15 @@
 1. **不要破坏“运行时 baseurl”机制**：前端资源/API/WS 一律走 `runtimeBase()` /
    `document.baseURI`；后端 SPA 服务统一走 `rewriteIndexBase`。
 2. **不要硬编码平台路径**：一律经 `TERMINAL_*` 环境变量（socket / baseurl / 各类文件）。
-3. **会话用户逻辑不可回归**：新建会话的用户由**标签级 `Tab.userSpec`** 决定
-   （`wsUrl` 的 `user=` 参数：`nas` 不带参数 / `root` / `app:<APP NAME>`），而非全局设置；
-   恢复/挂载的会话保持原用户；custom 模式每次新建必须弹 `UserPickDialog`
-   （登录用户 / ROOT / 应用用户列表，**两个常规选项必须保留在列表上方**）。
+3. **会话用户逻辑不可回归**：**没有全局「启动用户」设置**，用户是**标签级**的
+   `Tab.userSpec`（`wsUrl` 的 `user=` 参数：`nas` 不带参数 / `root` / `app:<APP NAME>`）；
+   恢复/挂载的会话保持原用户；**每次新建终端**必须弹 `UserPickDialog`
+   （登录用户 / ROOT / 应用用户列表，**两个常规选项必须保留在列表上方**：
+   登录用户按钮直接显示当前 NAS 用户名（`/api/info` 的 `nasUser.username`，解析不到才退回
+   文案），ROOT 右侧「应用用户」标题旁紧邻刷新按钮、不显示数量）；
+   冷启动且无会话可恢复时固定以当前登录用户（`nas`）建立，不弹窗。
+   `UserPickDialog` 的关闭（× 按钮 / 点弹窗外侧）**只关弹窗、不建会话**（新建只发生在
+   `@pick`）；ROOT 选项红边框红字、点击后二次确认。
 4. **标签关闭 = 唯一终止会话路径**：调用 `DELETE /api/session?id=`；浏览器断开只是
    “解挂载”，会话继续运行并写历史文件。
 5. **清屏必须同步**：前端 `term.clear()` 同时调用 `/api/session/clear` 截断历史文件。
@@ -128,22 +136,40 @@
 7. **v-model 禁止绑定表达式**：如 `v-model:visible="x !== null"` 会编译报错，
    改用 `:visible` + `@update:visible`。
 8. **中文注释习惯**：现有代码中文注释为主，新注释保持项目风格。
+9. **文本选择只在终端区域可用**：`style.css` 在 `body` 上全局 `user-select: none`
+   （另加 `-webkit-touch-callout: none` 关掉 iOS 长按原生菜单），仅 `.term-container`
+   与表单控件（`input`/`textarea`/`select`/`[contenteditable]`）恢复 `text`。
+   终端内的复制走 xterm 自绘选区（不依赖原生选择），**不要**为了「能选中」把
+   `user-select: text` 加回 `.xterm` 及其祖先/后代——那会在 DOM 渲染器下产生
+   「原生高亮 + xterm 选区」双重高亮；表单控件那条也不能删，否则输入框无法编辑。
+10. **前端资源缓存头只在 `serveBytes` 设**：`index.html`（含 SPA 回退）必须
+   `no-cache`（运行时才注入 `<base href>`），`assets/**` 强缓存 `immutable`。
+   不要给 index.html 加长缓存，也不要把缓存头搬到 socket/反代层去配死。
 
 ---
 
 ## 5. 常见的坑（Gotchas）
 
-- **浮层与「终端区域」对齐（快捷指令弹窗的尺寸依据）**：终端区域 = `.app-shell`
+- **浮层与「终端区域」对齐（三个弹窗的尺寸依据）**：终端区域 = `.app-shell`
   （高度 `--vvh`、顶部偏移 `--vvt`）**减去顶栏**；顶栏高度由 `useViewportHeight()`
   **实测** `<header>` 写入 `--tabbar-h`（`onMounted` 首测 + `ResizeObserver` 跟踪，
-  断点切换/功能名折叠/旋转后自动更新）。需要与终端区同高的浮层用 style.css 的
-  `.qc-region`：`top: calc(var(--vvt,0px) + var(--tabbar-h,0px))`、
-  `height: calc(var(--vvh,100dvh) - var(--tabbar-h,0px))`（`.qc-panel` 撑满它）。
+  断点切换/功能名折叠/旋转后自动更新）。**快捷指令 / 新建终端 / 设置三个弹窗统一用
+  style.css 的 `.term-region-center`**（定位带）：`top: calc(var(--vvt,0px) +
+  var(--tabbar-h,0px))`、`height: calc((var(--vvh,100dvh) - var(--tabbar-h,0px)) * 0.9)`，
+  面板在带内**居中**并用 `max-h-full` 限高——内容短时保持自然高度（**不与终端区域等高**），
+  超出时面板自身滚动。
+  ⚠️ 定位带横跨整宽、**必须 `pointer-events: none`**，面板侧 `pointer-events: auto`——
+  否则「点弹窗外侧关闭遮罩」的点击会被定位带接住，面板四周的点击全部失效（实测如此）。
+  不要退回 `fixed inset-0` 居中：它相对布局视口，iOS 键盘弹起时布局视口不缩、弹窗会被
+  键盘盖住，也会越过顶栏；也不要用「面板撑满带高」的写法，那正是被废弃的旧行为。
   **不要**用 `100vh/50vh`（iOS 键盘弹起/地址栏收合只改可视视口，vh 会算错）、
   **不要**用 `bottom: 0`（相对布局视口，键盘弹起时壳层底边被 `--vvt` 下移后错位）、
   **不要**在 CSS 里按 TabBar 的 padding/border 拼算顶栏高（改结构即失准；移动端第二行
   实测盒高比 `min-h-10` 多 1px，拼算会差 1px）。两个变量都写了回退值，缺失时不会塌高。
-  当前唯一使用者是快捷指令弹窗（宽度仍 `max-w-lg` 居中卡片，高度与终端区一致）。
+  使用情况：三个弹窗都是 `.term-region-center` + 面板 `max-h-full pointer-events-auto`
+  （宽度分别是 `max-w-lg`（快捷指令）/ `max-w-sm`（新建终端、设置））；
+  窄屏/键盘弹起时会变成内部滚动，别把 `overflow-y-auto`（设置）与内层列表的
+  `flex-1 min-h-0 overflow-y-auto`（快捷指令、选人窗）删掉。
 - **历史文件必须以 `O_RDWR` 打开**：`O_WRONLY` 打开后 attach 回放 / history API 读取
   会得到 `bad file descriptor`（EBADF）。
 - **PTY 按用户切换依赖 root**：非 root 进程对 `user=root` 或不同 uid 会 `permission
@@ -251,8 +277,14 @@
   只能验到 API 层。
 - **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07` 均为前后端约定的 OSC 控制序列。
-- **标签恢复的时序**：`App.onMounted` 先 `loadUserMode` 再 `restore`，保证无会话时
-  新建标签按正确用户模式（custom → 登录用户）。
+- **标签上的用户标注（`终端N:<用户>`）**：默认标题 = `t('tab_placeholder_user')`，用户显示名
+  由 `Tab.userLabel` 提供——新建标签时用 `sessions.labelForSpec(spec)`（`root` / `app:<APP NAME>`
+  取 APP NAME / `nas` 取 `/api/info` 的 `nasUser.username`），**恢复的标签用后端
+  `/api/sessions` 上报的 `user`**（`sessionInfo.User = Session.username`，即实际 setuid 到的
+  用户名），因此刷新/重启后 root 或应用用户会话不会被误标成登录用户。改这里时别退化成
+  「一律用当前登录用户」。手动重命名（`tab.title` 非空）优先、不带后缀。
+- **标签恢复的时序**：`App.onMounted` 先 `loadInfo` 再 `restore`；无会话可恢复时
+  `restore()` 固定以当前登录用户（`nas`）建立会话，因此标签一出现就已经有会话。
 - **功能名折叠**：`labelsOn` 控制桌面功能名显示；仅**手动**展开（《》按钮），
   溢出**自动收起**；不要恢复旧的“宽度检测自动展开”逻辑。
 - **验证会话环境时的沙箱陷阱（曾导致误判）**：在沙箱/CI 里验证 `buildSessionEnv`，
@@ -277,10 +309,11 @@
 - **部分应用没有同名系统用户**（如 `Nvidia-Driver-580`、`fnpackup`、`trim.media`），
   无法 setuid，已在 `/api/apps` 列表中被过滤掉——不要"修好"成显示出来。
 - **应用用户列表缓存（不要改回「每次打开弹窗都请求」）**：`stores/appUsers.ts` 把
-  `/api/apps` 结果（`apps` + `homeTemplate`）缓存在**内存**里——仅 custom 模式冷启动时
-  由 `App.onMounted` 调一次 `load()`（其他模式不加载），`UserPickDialog` 每次打开只走
-  `ensureLoaded()`（有缓存即返回，正常不发请求；启动后从其他模式切到 custom 才按需请求
-  一次），需要最新列表由弹窗的刷新按钮触发 `load()`。缓存**不落 localStorage**，所以
+  `/api/apps` 结果（`apps` + `homeTemplate`）缓存在**内存**里——冷启动时由
+  `App.onMounted` 调一次 `load()`（新建终端一律弹选人窗，故不再有条件），
+  `UserPickDialog` 每次打开只走
+  `ensureLoaded()`（有缓存即返回，正常不发请求；仅当启动预取失败、缓存为空时才补一次），
+  需要最新列表由弹窗的刷新按钮触发 `load()`。缓存**不落 localStorage**，所以
   「每次前端冷启动都重新拉取一遍」是天然结果；加载失败不置 `loaded`（避免用空列表假装
   加载成功），下次打开自动重试。`load()` 用 inflight promise 做并发去重：冷启动预取与
   弹窗首次打开同时触发也只有一次请求。刷新失败时保留旧列表（只在标题行提示错误），
@@ -393,11 +426,13 @@ cd backend && go vet ./...    # 需要 backend/embed 存在（可先放占位文
 
 - [ ] 前端资源与 API/WS 是否走 `runtimeBase()` / `wsUrl()`？
 - [ ] 是否硬编码了 platform 路径 / baseurl？
-- [ ] 会话用户逻辑（`Tab.userSpec` → `user=` 参数）是否符合三个模式（含 `app:<APP NAME>`）？
+- [ ] 会话用户逻辑（`Tab.userSpec` → `user=` 参数：`nas` / `root` / `app:<APP NAME>`）是否保持
+      「新建一律弹窗选择、冷启动无会话固定登录用户、已有会话保持原用户」？
 - [ ] 应用用户：`HOME`、`PWD`、`cmd.Dir` 是否都取 `TERMINAL_APP_HOME_TEMPLATE` 的同一路径
       （不一致会导致提示符不显示 `~`）？新增环境变量是否会被继承值覆盖？
 - [ ] 应用列表：新增过滤条件是否同步了 `usableAppUsers` 与 `/api/apps` 的语义？
 - [ ] 关闭标签 / 清屏是否走了对应 API？
+- [ ] 标签默认标题（`终端N:<用户>`）新建走 `labelForSpec`、恢复走后端 `user` 字段？
 - [ ] 前端改动是否已重新构建（`make dev`）并验证？
 - [ ] 新增 Pinia store / composable 是否遵循现有结构？
 - [ ] `npm run type-check`（vue-tsc）与 `vite build` 是否都通过？

@@ -24,9 +24,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // wsUrl builds the WebSocket URL for the terminal endpoint, under the runtime
-// base path. id 为空且未指定用户时后端新建会话（以持久化的启动用户模式为准）。
+// base path. id 为空时后端新建会话，用户由 user 参数决定。
 // user 参数："root" → 以 root 运行；"app:<APP NAME>" → 以该 NAS 应用用户运行
-// （HOME 与工作目录均为 /var/apps/<APP NAME>/home）；省略 → 默认 NAS 用户
+// （HOME 与工作目录均为 /var/apps/<APP NAME>/home）；省略 → 当前登录用户
 // （后端读 X-Trim-Userid）。
 export function wsUrl(id?: string, user?: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -57,6 +57,8 @@ export interface SessionInfo {
   lastActive: string
   size: number
   exited: boolean
+  // 会话实际运行用户的显示名（root / NAS 用户名 / 应用 APP NAME），用于标签上的用户标注
+  user?: string
 }
 
 export interface RuntimeInfo {
@@ -64,7 +66,6 @@ export interface RuntimeInfo {
   adminBaseURL: string
   sessionDir: string
   quickCmdsFile: string
-  userModeFile: string
   shell: string
   home: string
   version: string
@@ -80,8 +81,6 @@ export interface NasUserInfo {
   username: string
   home: string
 }
-
-export type UserMode = 'nas' | 'root' | 'custom'
 
 // 单个标签会话的运行用户："nas"（登录用户）/ "root" / "app:<APP NAME>"（NAS 应用用户）
 export type UserSpec = 'nas' | 'root' | `app:${string}`
@@ -111,15 +110,5 @@ export const api = {
     request<{ ok: boolean; path: string; commands: QuickCmd[] }>('/api/quickcmds', {
       method: 'POST',
       body: JSON.stringify({ commands })
-    }),
-  // 启动用户模式（nas | root）持久化
-  userMode: () =>
-    request<{ ok: boolean; mode: UserMode; path: string; defaultMode: string; nasUser?: NasUserInfo }>(
-      '/api/user-mode'
-    ),
-  saveUserMode: (mode: UserMode) =>
-    request<{ ok: boolean; mode: UserMode; path: string }>('/api/user-mode', {
-      method: 'POST',
-      body: JSON.stringify({ mode })
     })
 }

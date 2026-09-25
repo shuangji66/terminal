@@ -1,15 +1,13 @@
 <script setup lang="ts">
 // SettingsDialog — 设置弹窗：
-//  - 启动用户：NAS 用户（默认，X-Trim-Userid 传递）或 root；切换 root 需二次确认；
-//    持久化到后端文件（TERMINAL_USER_MODE_FILE），影响之后新建的会话。
-//  - 终端字号：数字显示框左减右加（10–26），保存在浏览器 localStorage，即时生效。
+//  - 主题 / 语言：图标按钮一行（标题下方置顶）
+//  - 终端字号：数字显示框左减右加（10–26），保存在浏览器 localStorage，即时生效
+//  - 关于：标题与「设置」标题同样式，右侧仅 GitHub 图标
+// 会话以哪个用户启动不再有全局设置：新建终端时由 UserPickDialog 逐个选择。
 import { ref, computed, watch } from 'vue'
 import { t, setLocale, useI18n } from '@/i18n'
 import { useTheme } from '@/composables/useTheme'
 import { useSettingsStore } from '@/stores/settings'
-import { useToastStore } from '@/stores/toast'
-import type { UserMode } from '@/serverapi'
-import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{
@@ -17,7 +15,6 @@ const emit = defineEmits<{
 }>()
 
 const settings = useSettingsStore()
-const toast = useToastStore()
 const { themeMode, cycleTheme } = useTheme()
 const { locale } = useI18n()
 
@@ -45,33 +42,6 @@ function close() {
   emit('update:visible', false)
 }
 
-// ---------- 启动用户 ----------
-const confirmRoot = ref(false)
-
-function selectUserMode(mode: UserMode) {
-  if (mode === settings.userMode) return
-  if (mode === 'root') {
-    confirmRoot.value = true // 二次确认
-    return
-  }
-  saveMode(mode) // nas / custom 直接保存
-}
-
-async function confirmSwitchRoot() {
-  confirmRoot.value = false
-  await saveMode('root')
-}
-
-async function saveMode(mode: UserMode) {
-  try {
-    await settings.saveUserMode(mode)
-    toast.show(t('settings_saved'), 'success')
-  } catch (e) {
-    console.warn('save user mode error:', e)
-    toast.show(t('settings_save_failed'), 'error')
-  }
-}
-
 // ---------- 终端字号 ----------
 function decFont() {
   settings.setFontSize(settings.fontSize - 1)
@@ -84,156 +54,97 @@ function incFont() {
 <template>
   <Teleport to="body">
     <Transition name="modal-fade">
-      <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div v-if="open" class="fixed inset-0 z-50">
         <div class="absolute inset-0 bg-black/50" @click="close"></div>
-        <div
-          class="relative w-full max-w-sm bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop p-5"
-        >
-          <div class="flex items-center justify-between">
-            <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('settings_title') }}</h3>
-            <button class="g-btn-ghost !h-8 !px-2 text-lg leading-none" @click="close">×</button>
-          </div>
+        <!-- 弹窗层对齐「终端区域」的 90% 高度带（见 style.css 的 .term-region-center），
+             面板 max-h-full 限高，内容超出时自身滚动。 -->
+        <div class="absolute left-0 right-0 term-region-center flex items-center justify-center p-4">
+          <div
+            class="relative w-full max-w-sm max-h-full pointer-events-auto bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop p-5 overflow-y-auto"
+          >
+            <div class="flex items-center justify-between">
+              <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('settings_title') }}</h3>
+              <button class="g-btn-ghost !h-8 !px-2 text-lg leading-none" @click="close">×</button>
+            </div>
 
-          <!-- 主题 / 语言（图标+功能名，一行显示，标题下方置顶） -->
-          <div class="mt-3 grid grid-cols-2 gap-2">
-            <button
-              class="flex items-center justify-center gap-2 rounded-md border border-line dark:border-line-dark text-ink dark:text-ink-dark hover:border-brand hover:bg-brand/5 transition-colors px-3 py-2 text-sm font-medium"
-              :title="t('theme_label')"
-              @click="cycleTheme"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" v-html="themeIconPath"></svg>
-              <span>{{ t('theme_' + themeMode) }}</span>
-            </button>
-            <button
-              class="flex items-center justify-center gap-2 rounded-md border border-line dark:border-line-dark text-ink dark:text-ink-dark hover:border-brand hover:bg-brand/5 transition-colors px-3 py-2 text-sm font-medium"
-              :title="t('lang_label')"
-              @click="cycleLanguage"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                <path d="M2 12h20" />
-              </svg>
-              <span>{{ locale === 'zh' ? t('lang_zh') : t('lang_en') }}</span>
-            </button>
-          </div>
-
-          <!-- 启动用户：只显示选项名，不显示 uid / 用户名 -->
-          <div class="mt-4">
-            <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1.5">
-              {{ t('settings_user_mode') }}
-            </label>
-            <div class="grid grid-cols-3 gap-2">
+            <!-- 主题 / 语言（图标+功能名，一行显示，标题下方置顶） -->
+            <div class="mt-3 grid grid-cols-2 gap-2">
               <button
-                class="rounded-md border px-2 py-2.5 text-sm font-medium text-center transition-colors"
-                :class="
-                  settings.userMode === 'nas'
-                    ? 'border-brand text-ink dark:text-ink-dark bg-brand/5'
-                    : 'border-line dark:border-line-dark text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5'
-                "
-                @click="selectUserMode('nas')"
+                class="flex items-center justify-center gap-2 rounded-md border border-line dark:border-line-dark text-ink dark:text-ink-dark hover:border-brand hover:bg-brand/5 transition-colors px-3 py-2 text-sm font-medium"
+                :title="t('theme_label')"
+                @click="cycleTheme"
               >
-                {{ t('settings_user_mode_nas') }}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" v-html="themeIconPath"></svg>
+                <span>{{ t('theme_' + themeMode) }}</span>
               </button>
               <button
-                class="rounded-md border px-3 py-2.5 text-sm font-medium text-center transition-colors"
-                :class="
-                  settings.userMode === 'root'
-                    ? 'border-brand text-ink dark:text-ink-dark bg-brand/5'
-                    : 'border-line dark:border-line-dark text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5'
-                "
-                @click="selectUserMode('root')"
+                class="flex items-center justify-center gap-2 rounded-md border border-line dark:border-line-dark text-ink dark:text-ink-dark hover:border-brand hover:bg-brand/5 transition-colors px-3 py-2 text-sm font-medium"
+                :title="t('lang_label')"
+                @click="cycleLanguage"
               >
-                {{ t('settings_user_mode_root') }}
-              </button>
-              <button
-                class="rounded-md border px-2 py-2.5 text-sm font-medium text-center transition-colors"
-                :class="
-                  settings.userMode === 'custom'
-                    ? 'border-brand text-ink dark:text-ink-dark bg-brand/5'
-                    : 'border-line dark:border-line-dark text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5'
-                "
-                @click="selectUserMode('custom')"
-              >
-                {{ t('settings_user_mode_custom') }}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                  <path d="M2 12h20" />
+                </svg>
+                <span>{{ locale === 'zh' ? t('lang_zh') : t('lang_en') }}</span>
               </button>
             </div>
-            <p class="mt-1.5 text-xs text-ink-faint dark:text-ink-faint-dark leading-relaxed">
-              {{
-                settings.userMode === 'custom'
-                  ? t('settings_user_mode_custom_hint')
-                  : t('settings_user_mode_hint')
-              }}
-            </p>
-          </div>
 
-          <!-- 终端字号 -->
-          <div class="mt-4">
-            <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1.5">
-              {{ t('settings_font_size') }}
-            </label>
-            <div class="flex items-center gap-2">
-              <!-- 左减 数字显示框 右加 -->
-              <div class="flex items-center rounded-md border border-line dark:border-line-dark overflow-hidden">
-                <button
-                  class="w-9 h-9 flex items-center justify-center text-lg text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                  :disabled="settings.fontSize <= 10"
-                  :title="t('settings_font_size') + ' −'"
-                  @click="decFont"
-                >
-                  −
-                </button>
-                <span class="w-12 h-9 flex items-center justify-center text-sm font-mono text-ink dark:text-ink-dark border-x border-line dark:border-line-dark">
-                  {{ settings.fontSize }}
-                </span>
-                <button
-                  class="w-9 h-9 flex items-center justify-center text-lg text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                  :disabled="settings.fontSize >= 26"
-                  :title="t('settings_font_size') + ' +'"
-                  @click="incFont"
-                >
-                  +
-                </button>
+            <!-- 终端字号 -->
+            <div class="mt-4">
+              <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1.5">
+                {{ t('settings_font_size') }}
+              </label>
+              <div class="flex items-center gap-2">
+                <!-- 左减 数字显示框 右加 -->
+                <div class="flex items-center rounded-md border border-line dark:border-line-dark overflow-hidden">
+                  <button
+                    class="w-9 h-9 flex items-center justify-center text-lg text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                    :disabled="settings.fontSize <= 10"
+                    :title="t('settings_font_size') + ' −'"
+                    @click="decFont"
+                  >
+                    −
+                  </button>
+                  <span class="w-12 h-9 flex items-center justify-center text-sm font-mono text-ink dark:text-ink-dark border-x border-line dark:border-line-dark">
+                    {{ settings.fontSize }}
+                  </span>
+                  <button
+                    class="w-9 h-9 flex items-center justify-center text-lg text-ink-soft dark:text-ink-soft-dark hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                    :disabled="settings.fontSize >= 26"
+                    :title="t('settings_font_size') + ' +'"
+                    @click="incFont"
+                  >
+                    +
+                  </button>
+                </div>
+                <span class="text-xs text-ink-faint dark:text-ink-faint-dark">{{ t('settings_font_size_hint') }}</span>
               </div>
-              <span class="text-xs text-ink-faint dark:text-ink-faint-dark">{{ t('settings_font_size_hint') }}</span>
             </div>
-          </div>
 
-          <!-- 关于：极简技术栈 + GitHub -->
-          <div class="mt-4 pt-4 border-t border-line dark:border-line-dark">
-            <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1.5">
-              {{ t('about_title') }}
-            </label>
-            <p class="text-xs text-ink-soft dark:text-ink-soft-dark leading-relaxed">{{ t('about_desc') }}</p>
-            <p class="mt-1 text-xs font-mono text-ink-faint dark:text-ink-faint-dark leading-relaxed">
-              {{ t('about_tech_label') }}{{ t('about_tech') }}
-            </p>
-            <a
-              href="https://github.com/shuangji66/terminal"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="g-btn-secondary !h-9 mt-3 text-sm"
-            >
-              <svg viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4">
-                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
-              </svg>
-              {{ t('about_github') }}
-            </a>
+            <!-- 关于：标题与「设置」标题同样式，GitHub 仅图标、紧靠标题右侧 -->
+            <div class="mt-4 pt-4 border-t border-line dark:border-line-dark">
+              <div class="flex items-center gap-1.5">
+                <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('about_title') }}</h3>
+                <a
+                  href="https://github.com/shuangji66/terminal"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="g-btn-ghost !h-8 !px-2"
+                  :title="t('about_github')"
+                  :aria-label="t('about_github')"
+                >
+                  <svg viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4">
+                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+                  </svg>
+                </a>
+              </div>
+              <p class="mt-1.5 text-xs text-ink-soft dark:text-ink-soft-dark leading-relaxed">{{ t('about_desc') }}</p>
+            </div>
           </div>
         </div>
       </div>
     </Transition>
-
-    <!-- 切换 root 二次确认 -->
-    <ConfirmDialog
-      :visible="confirmRoot"
-      :title="t('settings_confirm_root_title')"
-      :message="t('settings_confirm_root_msg')"
-      :confirm-text="t('settings_user_mode_root')"
-      :cancel-text="t('confirm_cancel')"
-      @confirm="confirmSwitchRoot"
-      @cancel="confirmRoot = false"
-      @update:visible="(v) => { if (!v) confirmRoot = false }"
-    />
   </Teleport>
 </template>

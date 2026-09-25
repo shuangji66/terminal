@@ -5,7 +5,6 @@ import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { t } from '@/i18n'
 import { useSessionsStore } from '@/stores/sessions'
 import { usePaneControlsStore } from '@/stores/paneControls'
-import { useSettingsStore } from '@/stores/settings'
 import type { UserSpec } from '@/serverapi'
 import ConfirmDialog from './ConfirmDialog.vue'
 import UserPickDialog from './UserPickDialog.vue'
@@ -17,20 +16,16 @@ const emit = defineEmits<{
 
 const store = useSessionsStore()
 const pc = usePaneControlsStore()
-const settings = useSettingsStore()
 
 // 激活标签终端的操作入口（复制/粘贴/清屏/重连）
 const activeControls = computed(() => pc.get(store.activeUid))
 
-// ---------- 新建终端：按启动用户模式决定（custom → 弹窗选择用户） ----------
+// ---------- 新建终端：一律弹窗选择以哪个用户启动 ----------
+// （会话用户是标签级属性：登录用户 / ROOT / 应用用户，见 UserPickDialog）
 const userPickVisible = ref(false)
 
 function onAddTab() {
-  if (settings.userMode === 'custom') {
-    userPickVisible.value = true
-  } else {
-    store.addTab({ userSpec: settings.userMode === 'root' ? 'root' : 'nas' })
-  }
+  userPickVisible.value = true
 }
 
 function onUserPicked(spec: UserSpec) {
@@ -176,7 +171,7 @@ async function confirmClose() {
     await store.closeTab(closeTargetUid.value)
   }
   closeTargetUid.value = null
-  // 全部标签关闭后重新开一个会话（自定义模式下会弹窗选择用户）
+  // 全部标签关闭后重新开一个会话（弹窗选择用户）
   if (store.tabs.length === 0) {
     onAddTab()
   }
@@ -224,10 +219,12 @@ function titleOf(uid: string): string {
         @mouseleave="onStripMouseLeave"
         @wheel="onStripWheel"
       >
+        <!-- 标签宽度随标题文本自适应（不设固定宽度），仅用 max-w 兜底：
+             默认标题现在是「终端 N:<用户>」，上限相应放宽，超长用户名仍由 truncate 省略。 -->
         <div
           v-for="tab in store.tabs"
           :key="tab.uid"
-          class="flex items-center gap-1.5 pl-2.5 pr-1 h-8 rounded-md text-xs font-medium cursor-pointer transition-all duration-150 shrink-0 max-w-[180px] sm:max-w-[220px]"
+          class="flex items-center gap-1.5 pl-2.5 pr-1 h-8 rounded-md text-xs font-medium cursor-pointer transition-all duration-150 shrink-0 max-w-[220px] sm:max-w-[280px]"
           :class="
             store.activeUid === tab.uid
               ? 'bg-brand text-white shadow-glow'
@@ -296,28 +293,28 @@ function titleOf(uid: string): string {
             <path d="m18 17-5-5 5-5" />
           </svg>
         </button>
-        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8" :title="t('act_search')" @click="activeControls?.search?.()">
+        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8 text-xs" :title="t('act_search')" @click="activeControls?.search?.()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
           <span :class="labelsOn ? 'hidden md:inline' : 'hidden'">{{ t('act_search') }}</span>
         </button>
-        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8" :title="t('act_paste')" @click="activeControls?.paste?.()">
+        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8 text-xs" :title="t('act_paste')" @click="activeControls?.paste?.()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
             <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
             <rect x="8" y="2" width="8" height="4" rx="1" />
           </svg>
           <span :class="labelsOn ? 'hidden md:inline' : 'hidden'">{{ t('act_paste') }}</span>
         </button>
-        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8" :title="t('act_clear')" @click="activeControls?.clear?.()">
+        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8 text-xs" :title="t('act_clear')" @click="activeControls?.clear?.()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="m9 9 6 6M15 9l-6 6" />
           </svg>
           <span :class="labelsOn ? 'hidden md:inline' : 'hidden'">{{ t('act_clear') }}</span>
         </button>
-        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8" :title="t('act_reconnect')" @click="activeControls?.reconnect?.()">
+        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8 text-xs" :title="t('act_reconnect')" @click="activeControls?.reconnect?.()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
             <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
             <path d="M21 3v5h-5" />
@@ -326,7 +323,7 @@ function titleOf(uid: string): string {
           </svg>
           <span :class="labelsOn ? 'hidden md:inline' : 'hidden'">{{ t('act_reconnect') }}</span>
         </button>
-        <button class="g-btn-ghost !px-2 sm:!px-2.5 !h-8 text-xs sm:text-sm" :title="t('act_quick_cmds')" @click="emit('quickCmds')">
+        <button class="g-btn-ghost !px-2 sm:!px-2.5 !h-8 text-xs" :title="t('act_quick_cmds')" @click="emit('quickCmds')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
             <polyline points="4 17 10 11 4 5" />
             <line x1="12" y1="19" x2="20" y2="19" />
@@ -334,7 +331,7 @@ function titleOf(uid: string): string {
           <span :class="labelsOn ? 'hidden md:inline' : 'hidden'">{{ t('act_quick_cmds') }}</span>
         </button>
         <!-- 设置（功能名自适应显示，移动端固定隐藏仅图标） -->
-        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8" :title="t('settings_title')" @click="emit('settings')">
+        <button class="g-btn-ghost !px-1.5 sm:!px-2 !h-8 text-xs" :title="t('settings_title')" @click="emit('settings')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
@@ -381,7 +378,7 @@ function titleOf(uid: string): string {
           <path d="M3 21v-5h5" />
         </svg>
       </button>
-      <button class="g-btn-ghost !px-2 !h-7 text-xs" :title="t('act_quick_cmds')" @click="emit('quickCmds')">
+      <button class="g-btn-ghost !px-2 !h-7 text-[11px]" :title="t('act_quick_cmds')" @click="emit('quickCmds')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
           <polyline points="4 17 10 11 4 5" />
           <line x1="12" y1="19" x2="20" y2="19" />

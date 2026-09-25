@@ -8,8 +8,9 @@ export type TabStatus = 'connecting' | 'open' | 'exited' | 'error'
 export interface Tab {
   uid: string // 前端稳定标识（标签状态机的本地主键）
   id: string | null // 后端会话 id；新建会话在 WS 控制帧回填
-  title: string // 自定义标题（'' = 使用默认「终端 N」）
-  userSpec: UserSpec // 本标签会话以哪个用户运行（nas=登录用户 / root）
+  title: string // 自定义标题（'' = 使用默认「终端 N:<用户>」）
+  userSpec: UserSpec // 本标签会话以哪个用户运行（nas=登录用户 / root / app:<APP NAME>）
+  userLabel: string // 该用户的显示名（登录用户名 / root / 应用 APP NAME），用于默认标签名
   createdAt: number
   status: TabStatus
   restoring: boolean // 是否正在回放历史
@@ -42,11 +43,21 @@ export const useSessionsStore = defineStore('sessions', () => {
     () => tabs.value.find((tb) => tb.uid === activeUid.value) ?? null
   )
 
-  // 显示标题：自定义标题 > 默认「终端 N」
+  // userSpec → 显示名：登录用户取后端解析出的 NAS 用户名，ROOT 固定 root，应用用户取 APP NAME
+  function labelForSpec(spec: UserSpec): string {
+    if (spec === 'root') return 'root'
+    if (spec.startsWith('app:')) return spec.slice('app:'.length)
+    return info.value?.nasUser?.username || 'nas'
+  }
+
+  // 显示标题：自定义标题 > 默认「终端 N:<用户>」（用户未知时退回「终端 N」）
   function titleFor(tab: Tab): string {
     if (tab.title) return tab.title
     const idx = tabs.value.findIndex((tb) => tb.uid === tab.uid)
-    return t('tab_placeholder', { n: idx + 1 })
+    const n = idx + 1
+    return tab.userLabel
+      ? t('tab_placeholder_user', { n, user: tab.userLabel })
+      : t('tab_placeholder', { n })
   }
 
   async function loadInfo() {
@@ -59,11 +70,13 @@ export const useSessionsStore = defineStore('sessions', () => {
   }
 
   function addTab(preload?: Partial<Tab>): Tab {
+    const userSpec = preload?.userSpec ?? 'nas'
     const tab: Tab = {
       uid: newUid(),
       id: preload?.id ?? null,
       title: preload?.title ?? '',
-      userSpec: preload?.userSpec ?? 'nas',
+      userSpec,
+      userLabel: preload?.userLabel ?? labelForSpec(userSpec),
       createdAt: preload?.createdAt ?? Date.now(),
       status: preload?.status ?? 'connecting',
       restoring: preload?.restoring ?? false
@@ -118,8 +131,8 @@ export const useSessionsStore = defineStore('sessions', () => {
       const next = tabs.value[Math.min(idx, tabs.value.length - 1)]
       activeUid.value = next ? next.uid : null
     }
-    // 注意：不再在这里自动新开标签——由 TabBar 在全部关闭后按用户模式决定
-    // （自定义模式下需弹窗选择用户，store 内无法弹窗）。
+    // 注意：不再在这里自动新开标签——由 TabBar 在全部关闭后重新新建
+    // （需弹窗选择用户，store 内无法弹窗）。
   }
 
   function setTabStatus(uid: string, status: TabStatus) {
@@ -127,18 +140,26 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (tab) tab.status = status
   }
 
-  // 前端启动：先从后端恢复活动会话；无会话则新建一个（defaultSpec 决定新会话用户）。
-  // custom 模式下启动无会话时固定以登录用户（nas）建立会话，由调用方传入。
-  async function restore(defaultSpec: UserSpec = 'nas') {
+  // 前端启动：先从后端恢复活动会话；无会话则新建一个——固定以当前登录用户（nas）建立。
+  // （新建标签页另走 TabBar 的用户选择弹窗，与本函数无关。）
+  async function restore() {
     restoring.value = true
     try {
       const res = await api.sessions()
       const list = res.sessions || []
       if (list.length === 0) {
-        addTab({ userSpec: defaultSpec })
+        addTab({ userSpec: 'nas' })
       } else {
         for (const s of list) {
-          addTab({ id: s.id, createdAt: new Date(s.createdAt).getTime(), restoring: true, status: 'connecting' })
+          // 恢复的会话以标签级 userLabel 记录其后端上报的运行用户（老后端无 user 字段时
+          // 退回默认登录用户显示名），仅用于标签展示；挂载本身仍按 id 进行。
+          addTab({
+            id: s.id,
+            createdAt: new Date(s.createdAt).getTime(),
+            restoring: true,
+            status: 'connecting',
+            userLabel: s.user || labelForSpec('nas')
+          })
         }
         // 恢复历史内容（回放）由各 TerminalPane 负责：先取历史写入 xterm，再挂载 WS
         activeUid.value = tabs.value[0]?.uid ?? null
@@ -146,7 +167,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       return list.length
     } catch (e) {
       console.warn('restore sessions error:', e)
-      addTab({ userSpec: defaultSpec })
+      addTab({ userSpec: 'nas' })
       return 0
     } finally {
       restoring.value = false
@@ -164,6 +185,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     restoring,
     info,
     titleFor,
+    labelForSpec,
     loadInfo,
     addTab,
     setActive,

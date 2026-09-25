@@ -11,16 +11,19 @@
 
 ## 功能特性
 
+- **标签显示运行用户** — 默认标签名为 `终端N:<用户>`（如 `终端1:niubi`、`终端2:root`、
+  `终端3:terminal`），用户取会话**实际**运行的用户（NAS 用户名 / `root` / 应用 APP NAME）；
+  恢复的会话按后端上报的用户显示。标签宽度随标题文本自适应（超长用户名才会省略）。
 - **多标签终端** — 顶部标签栏「+」常驻左侧新开会话（每个标签一个独立 PTY 会话）；
   标签条支持**鼠标拖动 / 滚轮横向滚动**，双击标签可重命名，关闭按钮常驻显示
   （已有会话关闭需二次确认）；全部标签关闭后自动新开。
-- **启动用户切换** — 设置弹窗选择新会话以哪个用户进入 bash：
-  - `当前登录用户`（默认，网关 `X-Trim-Userid` 指定的 NAS 用户）
-  - `ROOT`（切换需二次确认）
-  - `自定义`：启动无会话可恢复时固定以登录用户建立会话；此后**每次新建终端弹窗选择**
-    登录用户 / ROOT / **应用用户**。偏好持久化到 `TERMINAL_USER_MODE_FILE`。有会话可
-    恢复时保持原会话用户。
-- **以应用用户启动（NAS 应用）** — 自定义模式的弹窗会列出本机已安装应用：
+- **新建终端选择用户** — 点顶栏「+」弹出「新建终端」窗口，选择会话以哪个用户进入 bash：
+  **当前登录用户**（按钮直接显示该 NAS 用户名，如 `niubi`；网关 `X-Trim-Userid` 指定）/
+  `ROOT`（红边框红字，点击需二次确认「root用户操作需谨慎。」）/ **应用用户**
+  （「应用用户」标题旁即为刷新按钮，不显示数量）。点 × 按钮或窗口外侧即关闭并
+  **取消本次新建**（不会建立会话）。用户是**标签级**属性，已有会话保持原用户；
+  应用冷启动且**无会话可恢复时固定以当前登录用户**建立会话（不弹窗）。
+- **以应用用户启动（NAS 应用）** — 「新建终端」弹窗会列出本机已安装应用：
   后端执行 `appcenter-cli list` 解析 **APP NAME**（即系统里的应用用户名），
   过滤系统软件（`trim.*`）与没有同名系统用户 / 家目录的应用，按名称排序后返回；
   选中即以该用户进入 bash，**`HOME` 与工作目录都设为应用家目录
@@ -36,15 +39,18 @@
 - **功能名折叠/展开** — 桌面端《》按钮常驻搜索按钮左侧手动折叠/展开功能名
   （搜索/粘贴/清屏/重连/快捷指令/设置），标签溢出（标签页变多）时自动收起；
   展开仅手动触发（展开时标签可视区变窄属预期）。
+- **仅终端区域可选中文本** — 除终端区域外全局禁用文本选择（含 iOS 长按弹出的原生菜单）；
+  终端内复制仍走 xterm 自绘选区 + 自动复制，输入框/文本域保留可选择性以便编辑。
 - **鼠标选中自动复制** — 桌面端框选/双击选词后自动复制进剪贴板并 toast 提示，
   移动端由系统文字工具取代复制按钮（点击/长按终端文本即调起原生粘贴/选择菜单，
   并桥接输入到会话，可正常键入）；复制按钮已完全移除。
 - **快捷指令** — 终端快捷命令持久化到文件（`TERMINAL_QUICK_CMDS_FILE`），弹窗顶部
   提供「新增 / 关闭」，支持编辑 / 删除 / 一键执行（可勾选自动回车执行），执行后光标
-  聚焦回终端。
+  聚焦回终端；弹窗在终端区域内**居中**、高度随内容自适应（上限终端区域的 90%）。
 - **设置弹窗** — 顶部一行「主题（图标+当前模式，点击循环浅色/深色/跟随系统）与语言」；
-  启动用户（三选项一行）；终端字号（左减右加 10–26，存浏览器 localStorage 即时生效）；
-  末尾「关于」极简技术栈 + GitHub 链接。
+  终端字号（左减右加 10–26，默认 16，存浏览器 localStorage 即时生效）；
+  末尾「关于」：标题与「设置」标题同样式，右侧仅一个 GitHub 图标入口（点击新标签打开）。
+  弹窗高度上限同为终端区域的 90%。
 - **终端配色** — 深色模式黑底绿字（绿色略暗淡，`#2bd957`）；浅色模式米白底黑字；
   顶栏浅色为温和白色，与终端米白错开。
 - **移动端辅助功能键** — 两行胶囊按键条：第一行 ESC | ↑ | Tab | Ctrl | Alt | Shift |
@@ -108,7 +114,6 @@
 │   ├── sessions.go          # 会话管理：PTY 会话（按用户运行/临时历史文件/挂载回放/清空/关闭）
 │   ├── terminal.go          # WebSocket 终端处理器（新建会话用户解析、挂载、resize、心跳）
 │   ├── quickcmds.go         # 快捷指令持久化 API
-│   ├── usermode.go          # 启动用户模式（nas | root | custom）持久化 API
 │   └── apps.go              # 应用用户：appcenter-cli list 解析/过滤，app:<APP NAME> 用户解析
 └── frontend/                # Vue 3 前端
     ├── index.html           # 注入 <base> 由后端运行时改写
@@ -117,7 +122,7 @@
         ├── main.ts / App.vue / style.css
         ├── i18n/            # zh / en 文案
         ├── composables/     # useTheme / useI18n
-        ├── stores/          # Pinia：sessions / settings / quickCmds / toast / paneControls
+        ├── stores/          # Pinia：sessions / settings / quickCmds / toast / paneControls / appUsers
         ├── serverapi/       # 运行时 baseurl 感知的 API / WS 客户端
         └── components/      # TabBar / TerminalPane / KeypadBar / SettingsDialog /
                              # UserPickDialog / QuickCmds*Dialog / ConfirmDialog / Toast
@@ -157,14 +162,13 @@ baseurl 前缀下；也可直接 `curl --unix-socket` 访问或本地反代到 1
 | `TERMINAL_ADMIN_BASEURL` | 前端资源 baseurl 前缀（空 = 根路径） | 空 |
 | `TERMINAL_QUICK_CMDS_FILE` | 快捷指令持久化文件 | `$TMPDIR/terminal/quickcmds.json` |
 | `TERMINAL_SESSION_DIR` | 终端会话临时目录（**应用停止时整目录清除**） | `$TMPDIR/terminal/sessions` |
-| `TERMINAL_USER_MODE_FILE` | 启动用户模式（`nas`\|`root`\|`custom`）持久化文件 | `$TMPDIR/terminal/user-mode.json` |
 | `TERMINAL_APP_HOME_TEMPLATE` | 应用用户 HOME / 工作目录模板（`%s` = APP NAME） | `/var/apps/%s/home` |
 | `TERMINAL_APPCENTER_CLI` | 列出已安装应用的命令（失败时回退扫描应用根目录） | `appcenter-cli` |
 | `TERMINAL_SHELL` | 终端使用的 shell | `/bin/bash` |
 
 新终端会话以「当前登录用户」为默认：网关（nginx 等）在反代 unix socket 时附加
 `X-Trim-Userid: <uid>` 请求头，后端按该 uid 运行会话（非 root 进程无法 setuid，因此
-后端需以 root 启动）；`ROOT` 模式下新会话以 root 运行。
+后端需以 root 启动）。冷启动无会话可恢复时即按此建立；新建终端时可另行选择 ROOT 或应用用户。
 
 ### 应用用户（NAS 应用）的前置条件
 
@@ -211,15 +215,23 @@ location /app/terminal/ {
 
 | 方法 & 路径 | 说明 |
 | --- | --- |
-| `GET /api/info` | 运行时信息（socket/baseurl/会话目录/用户模式文件/shell/home/版本/nasUser/trimUid/currentUid） |
-| `GET /api/user-mode` | 启动用户模式（`nas`\|`root`\|`custom`，含 `nasUser`） |
-| `POST /api/user-mode` | 持久化启动用户模式（非法值 400） |
-| `GET /api/sessions` | 活动会话列表（id/创建时间/最近活动/历史大小/是否退出） |
+| `GET /api/info` | 运行时信息（socket/baseurl/会话目录/shell/home/版本/nasUser/trimUid/currentUid） |
+| `GET /api/sessions` | 活动会话列表（id/创建时间/最近活动/历史大小/是否退出/**运行用户显示名 `user`**） |
 | `GET /api/apps` | 可选的应用用户列表（`appcenter-cli list` 的 APP NAME，已过滤 `trim.*` 与不可用项） |
 | `GET /api/session/history?id=` | 会话历史内容（取末尾 ≤4MB） |
 | `POST /api/session/clear?id=` | **清空**会话历史临时文件（前端"清屏"同步调用） |
 | `DELETE /api/session?id=` | 终止会话（唯一终止路径；关闭标签页时调用） |
 | `GET /api/quickcmds` / `POST /api/quickcmds` | 快捷指令列表 / 整体保存（原子写） |
+
+### 静态资源缓存
+
+前端资源由后端直出并逐类设置 `Cache-Control`：
+
+| 资源 | 缓存头 | 原因 |
+| --- | --- | --- |
+| `index.html`（含 SPA 回退） | `no-cache, must-revalidate` | 运行时才注入 `<base href>`，缓存住会把旧页面钉在浏览器里 |
+| `assets/**`（Vite 产物） | `public, max-age=31536000, immutable` | 文件名带内容哈希，内容变则文件名变 |
+| 根级其它静态文件 | `public, max-age=86400` | 文件名无哈希，给一天折中 |
 
 ---
 

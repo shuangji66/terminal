@@ -66,12 +66,12 @@ async function moveDown(idx: number) {
       <div v-if="open" class="fixed inset-0 z-50">
         <!-- 遮罩仍铺满全屏（维持模态语义：点任意处关闭，含顶栏区域） -->
         <div class="absolute inset-0 bg-black/50" @click="close"></div>
-        <!-- 面板所在层对齐「终端区域」矩形（壳高/壳顶偏移 − 顶栏，见 style.css 的 .qc-region）：
-             面板高度因此与终端区一致，且不会被顶栏或底部键条压住；
+        <!-- 面板在「终端区域」的 90% 高度带内居中（见 style.css 的 .term-region-center）：
+             高度随内容自适应、上限为终端区域的 90%，超出时列表内部滚动；
              宽度仍由 max-w-lg 居中限制（卡片式，不满宽）。 -->
-        <div class="absolute left-0 right-0 qc-region flex items-center justify-center px-4">
+        <div class="absolute left-0 right-0 term-region-center flex items-center justify-center p-4">
           <div
-            class="qc-panel relative w-full max-w-lg bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop flex flex-col"
+            class="relative w-full max-w-lg max-h-full pointer-events-auto bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop flex flex-col"
           >
             <!-- 顶部：标题 + 新增 / 关闭 -->
             <div class="flex items-center justify-between px-5 py-3 border-b border-line dark:border-line-dark shrink-0">
@@ -82,7 +82,7 @@ async function moveDown(idx: number) {
               </div>
             </div>
 
-            <!-- 命令卡片列表：撑满剩余高度，内部滚动（不再用 max-h-[50vh]，否则面板变高后仍被截断） -->
+            <!-- 命令卡片列表：占满面板剩余高度，超出时内部滚动（面板本身不再撑满整个终端区） -->
             <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3">
             <div v-if="store.loading" class="text-sm text-ink-soft dark:text-ink-soft-dark text-center py-8">
               {{ t('loading') }}

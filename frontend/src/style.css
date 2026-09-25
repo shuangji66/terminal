@@ -106,6 +106,34 @@ body {
   color: #0a0a0a;
   font-size: 15px;
   line-height: 1.5;
+
+  /* 除终端区域外，全局禁用文本选择：这是一层应用外壳而非文档，选中标签/按钮/说明文字
+   * 只会带来误拖与 iOS 长按弹出原生菜单。终端里的复制由 xterm 自己的选区实现
+   * （.xterm 内部为 canvas/DOM 选区层，不依赖原生选择），另有「框选/长按选词自动复制」，
+   * 因此这里禁掉原生选择不影响终端复制。.term-container 自身恢复可选、靠继承下发（见下）。
+   * -webkit-touch-callout：iOS 长按弹出「拷贝/查询」气泡，一并关掉。
+   * 输入框/文本域必须保留可选择性，否则无法用鼠标或键盘选中已输入内容进行编辑。 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 终端区域恢复可选（终端之外的区域一律不可选）。
+ * 只恢复 .term-container 自身、靠继承下发：xterm 的 .xterm { user-select: none } 保持原样——
+ * 它的选区是自绘的（选区层 + 自动复制），不依赖原生选择；保留该声明还可避免 DOM 渲染器下
+ * 出现「原生高亮 + xterm 选区」双重高亮。 */
+.term-container {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 表单控件豁免：不可选择会让编辑（全选/替换/拖选）失效 */
+input,
+textarea,
+select,
+[contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .dark body {
@@ -263,18 +291,23 @@ body {
   pointer-events: none;
 }
 
-/* 快捷指令面板：与「终端区域」同矩形。终端区 = 壳层（高度 --vvh、顶部偏移 --vvt）
- * 减去顶栏；面板上下边界因此与终端区严格对齐、高度自动相等。
+/* 弹窗定位带：把浮层放在「终端区域」的 90% 高度带内并居中。终端区 = 壳层
+ * （高度 --vvh、顶部偏移 --vvt）减去顶栏（--tabbar-h，由 useViewportHeight() 实测）。
+ * 快捷指令 / 新建终端 / 设置三个弹窗都用它：面板 max-h-full 限高，内容短时保持自然
+ * 高度、超出时面板自身滚动，因此弹窗既不与终端区等高、也不会超出终端区域。
+ *
  * 不用 100vh/50vh 这类视口单位：iOS 上键盘弹起/地址栏收合只改可视视口，vh 会算错。
- * 也不用 `bottom: 0`（它相对布局视口，键盘弹起时壳层底边被 --vvt 下移后会错位）。
- * 两个变量都带回退值：--tabbar-h 缺失时按 0 处理（面板占满整个壳层，不会塌成 0 高），
- * --vvh 缺失时退 100dvh。宽度仍由 max-w-lg 居中限制（卡片式，不满宽）。 */
-.qc-region {
+ * 也不用 `bottom: 0`（它相对布局视口，键盘弹起时壳层底边被 --vvt 下移后会错位），
+ * 更不用 `fixed inset-0` 居中（同样相对布局视口，键盘弹起时会被键盘盖住）。
+ * 两个变量都带回退值：--tabbar-h 缺失时按 0 处理（带高 = 壳高 × 0.9，不会塌成 0），
+ * --vvh 缺失时退 100dvh。宽度仍由 max-w-lg / max-w-sm 居中限制（卡片式，不满宽）。
+ *
+ * ⚠️ 定位带横跨整宽，必须 pointer-events: none，面板侧 pointer-events: auto——
+ * 否则「点弹窗外侧关闭」的点击会被定位带接住，面板四周的点击全部失效。 */
+.term-region-center {
   top: calc(var(--vvt, 0px) + var(--tabbar-h, 0px));
-  height: calc(var(--vvh, 100dvh) - var(--tabbar-h, 0px));
-}
-.qc-panel {
-  height: 100%;
+  height: calc((var(--vvh, 100dvh) - var(--tabbar-h, 0px)) * 0.9);
+  pointer-events: none;
 }
 
 /* ===== 可复用组件类 ===== */

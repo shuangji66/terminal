@@ -48,6 +48,9 @@ type sessionInfo struct {
 	LastActive string `json:"lastActive"`
 	Size       int64  `json:"size"`
 	Exited     bool   `json:"exited"`
+	// User 是会话实际运行用户的显示名（root / NAS 用户名 / 应用 APP NAME），
+	// 前端据此在标签上标注「终端 N:<user>」——恢复的会话也能显示真实用户。
+	User string `json:"user"`
 }
 
 // SetSPA attaches the embedded frontend assets to the admin mux.
@@ -65,7 +68,6 @@ func (m *AdminMux) handleInfo(w http.ResponseWriter, r *http.Request) {
 			"adminBaseURL":  m.renv.AdminBaseURL,
 			"sessionDir":    m.renv.SessionDir,
 			"quickCmdsFile": m.renv.QuickCmdsFile,
-			"userModeFile":  m.renv.UserModeFile,
 			"shell":         m.renv.Shell,
 			"home":          m.renv.Home,
 			"version":       m.renv.Version,
@@ -90,43 +92,6 @@ func nasUserInfo(renv *RuntimeEnv, trimUID string) map[string]interface{} {
 		"username": ru.username,
 		"home":     ru.home,
 	}
-}
-
-// handleGetUserMode 读取持久化的启动用户模式（nas | root）。
-func (m *AdminMux) handleGetUserMode(w http.ResponseWriter, r *http.Request) {
-	mode, err := loadUserModeFile(m.renv.UserModeFile)
-	if err != nil {
-		writeErr(w, "failed to load user mode: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]interface{}{
-		"ok":          true,
-		"mode":        mode,
-		"path":        m.renv.UserModeFile,
-		"defaultMode": "nas",
-		"nasUser":     nasUserInfo(m.renv, r.Header.Get("X-Trim-Userid")),
-	})
-}
-
-// handleSaveUserMode 持久化启动用户模式（nas | root）。
-func (m *AdminMux) handleSaveUserMode(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Mode string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if !validUserModes[req.Mode] {
-		writeErr(w, "invalid mode, must be nas or root", http.StatusBadRequest)
-		return
-	}
-	if err := saveUserModeFile(m.renv.UserModeFile, req.Mode); err != nil {
-		writeErr(w, "failed to save user mode: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	logger().Printf("[usermode] saved mode=%s path=%s", req.Mode, m.renv.UserModeFile)
-	writeJSON(w, map[string]interface{}{"ok": true, "mode": req.Mode, "path": m.renv.UserModeFile})
 }
 
 func (m *AdminMux) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +206,22 @@ func rewriteIndexBase(body []byte, base string) []byte {
 	return []byte(headTag + s)
 }
 
+// cacheControlFor 返回前端资源的 Cache-Control：
+//   - index.html（含 SPA 回退）：绝不能缓存——后端在响应时才注入运行时 <base href>，
+//     且它引用的是带内容哈希的资源名，缓存住就会把旧页面钉在浏览器里。
+//   - assets/：Vite 构建产物，文件名带内容哈希，内容变了文件名就变 → 可长期强缓存。
+//   - 其余根级静态文件（图标/字体等）：文件名无哈希，给一天缓存折中。
+func cacheControlFor(name string) string {
+	switch {
+	case strings.HasSuffix(name, ".html"):
+		return "no-cache, must-revalidate"
+	case strings.HasPrefix(path.Clean(name), "assets/"):
+		return "public, max-age=31536000, immutable"
+	default:
+		return "public, max-age=86400"
+	}
+}
+
 func serveBytes(w http.ResponseWriter, name string, b []byte) {
 	ct := "text/plain; charset=utf-8"
 	switch {
@@ -263,6 +244,7 @@ func serveBytes(w http.ResponseWriter, name string, b []byte) {
 	case strings.HasSuffix(name, ".woff2"):
 		ct = "font/woff2"
 	}
+	w.Header().Set("Cache-Control", cacheControlFor(name))
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(200)
 	w.Write(b)
@@ -306,10 +288,6 @@ func (m *AdminMux) buildHandler() http.Handler {
 			m.handleGetQuickCmds(w, r)
 		case p == "/api/quickcmds" && r.Method == http.MethodPost:
 			m.handleSaveQuickCmds(w, r)
-		case p == "/api/user-mode" && r.Method == http.MethodGet:
-			m.handleGetUserMode(w, r)
-		case p == "/api/user-mode" && r.Method == http.MethodPost:
-			m.handleSaveUserMode(w, r)
 		default:
 			m.serveSPA(w, r, spaPath(p))
 		}

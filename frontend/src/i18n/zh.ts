@@ -4,6 +4,7 @@ export const zh: Record<string, string> = {
   tab_close: '关闭标签',
   tab_rename: '双击重命名',
   tab_placeholder: '终端 {n}',
+  tab_placeholder_user: '终端{n}:{user}',
   tab_title_placeholder: '输入标签名称',
   tab_renamed: '已重命名',
   restoring: '正在恢复会话历史…',
@@ -83,32 +84,26 @@ export const zh: Record<string, string> = {
 
   // 设置
   settings_title: '设置',
-  settings_user_mode: '启动用户',
-  settings_user_mode_nas: '当前登录用户',
-  settings_user_mode_root: 'ROOT',
-  settings_user_mode_custom: '自定义',
-  settings_user_mode_custom_hint: '启动无会话恢复时以登录用户建立；之后每次新建终端询问使用哪个用户。',
-  user_pick_title: '新建终端以哪个用户启动？',
+  settings_font_size: '终端字号',
+  settings_font_size_hint: '（10–26）',
+  qc_close: '关闭',
+
+  // 新建终端：选择以哪个用户启动（UserPickDialog）
+  user_pick_title: '新建终端',
+  user_pick_current: '当前登录用户',
+  user_pick_root: 'ROOT',
+  user_pick_root_confirm_title: '以 ROOT 用户启动终端',
+  user_pick_root_confirm_msg: 'root用户操作需谨慎。',
   user_pick_apps: '应用用户',
   user_pick_apps_empty: '没有可用的应用用户',
   user_pick_apps_failed: '加载应用列表失败',
   user_pick_filter: '筛选应用',
   user_pick_refresh: '刷新应用列表',
   user_pick_app_home: '家目录：',
-  settings_user_mode_hint: '新建终端会话时以哪个用户运行；已存在的会话保持原用户。',
-  settings_confirm_root_title: '切换到 ROOT 用户',
-  settings_confirm_root_msg: '确定将新终端会话以 ROOT 用户启动吗？已存在的会话不受影响。',
-  settings_font_size: '终端字号',
-  settings_font_size_hint: '（10–26）',
-  settings_saved: '设置已保存',
-  settings_save_failed: '保存失败',
-  qc_close: '关闭',
 
   // 关于
   about_title: '关于',
-  about_desc: '基于 Go 与 Vue 3 构建的本地 Web 终端，仅经 Unix Socket 访问。',
-  about_tech_label: '主要技术栈：',
-  about_tech: 'Go 1.27 · Vue 3 · TypeScript · Tailwind CSS 4 · Pinia · xterm.js v6',
+  about_desc: '纯粹的本地终端，基于Go 与 Vue 3 构建。',
   about_github: 'GitHub',
 }
 

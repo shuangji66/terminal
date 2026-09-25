@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, type AppUserInfo } from '@/serverapi'
 
-// 应用用户列表缓存（仅「自定义」启动用户模式使用）
-//  - 冷启动时由 App 预取一次（仅 custom 模式），之后每次新建会话的选人弹窗直接读缓存，
+// 应用用户列表缓存（「新建终端」选人弹窗使用）
+//  - 冷启动时由 App 预取一次，之后每次新建会话的选人弹窗直接读缓存，
 //    不再逐次请求后端（后端 appcenter-cli 列表虽有短缓存，但每次仍要走一次 HTTP + 遍历）。
 //  - 缓存只在内存里、不持久化：每次前端冷启动都是空缓存，启动预取即「刷新一遍」；
 //    生命周期内如需最新列表，由弹窗的刷新按钮触发 load()。
