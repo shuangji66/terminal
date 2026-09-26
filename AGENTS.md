@@ -97,10 +97,10 @@
   改成只写后，tmux/vim 的「复制到系统剪贴板」照常可用（实测剪贴板确实变成终端里发出的文本），
   而 OSC 52 读不再往 PTY 灌任何字节（实测 inputTotal 不变）；顺带让 http 部署下 OSC 52 写入也不报错。
   注意：顶栏「粘贴」按钮是**另一条独立路径**（直接 `navigator.clipboard.readText()` 后 `sock.send`），
-  与这个 addon 无关。**刻意不加载 `SerializeAddon`（无导出需求）与
-  `ImageAddon`**（iip/sixel 默认 `storageLimit` 128MB、pixelLimit 数百万像素：终端里
-  `cat` 一个恶意文件就能驱动解码/缓存；实测加回后推一段 iip 序列会真的生成图片节点，
-  不加载则一个节点都没有）——要用就显式限流后再加回；主题（深色黑底绿字 / 浅色米白
+  与这个 addon 无关。**刻意不加载 `SerializeAddon`（无导出需求，要用再加回）**；
+  **终端不支持显示图片**：`@xterm/addon-image` 已从依赖中彻底移除，**不要加回来**
+  （iip/sixel 默认 `storageLimit` 128MB、pixelLimit 数百万像素：终端里 `cat` 一个恶意文件
+  就能驱动解码/缓存；移除前实测推一段 iip 序列会真的生成图片节点）。主题（深色黑底绿字 / 浅色米白
   黑字）、字号（来自 settings store）动态应用；会话控制帧处理（`\x1b]id;` /
   `\x1b]ready\x07` / `\x1b]exit\x07`）；搜索悬浮框；鼠标选中自动复制（桌面端）；
   **移动端长按选词并自动复制**（`handleLongPress` → `selectWordAt`：按触摸坐标算列/行 →

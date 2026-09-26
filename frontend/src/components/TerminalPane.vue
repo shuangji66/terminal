@@ -1183,8 +1183,10 @@ function initTerminal() {
   } catch (e) {
     console.warn('clipboard addon:', e)
   }
-  // 刻意不加载 SerializeAddon（无导出需求）与 ImageAddon（iip/sixel 默认 storageLimit 128MB、
-  // pixelLimit 数百万像素，终端里 cat 一个恶意文件就能驱动解码/缓存）。要用再按需加回并显式限流。
+  // 刻意不加载 SerializeAddon（无导出需求）。
+  // 终端不支持显示图片：@xterm/addon-image 已从依赖中彻底移除（iip/sixel 默认
+  // storageLimit 128MB、pixelLimit 数百万像素，终端里 cat 一个恶意文件就能驱动解码/缓存）。
+  // 不要再加回来。
 
   // open() 要等终端字体就绪（见 waitTerminalFont）：终端字号 10–26px、字宽因字体而异，
   // 拿兜底字体量出来的行列是错的。等待上限 FONT_WAIT_MS（字体已由 main.ts 预取，正常几乎
