@@ -154,7 +154,7 @@ function cancelDeleteQuickCmd() {
       :visible="deleteDialogVisible"
       :title="t('qc_delete_confirm_title')"
       :message="t('qc_delete_confirm_msg', { name: deleteTarget?.name || '' })"
-      :confirm-text="t('qc_delete')"
+      :confirm-text="t('confirm_delete')"
       :cancel-text="t('confirm_cancel')"
       @confirm="confirmDeleteQuickCmd"
       @cancel="cancelDeleteQuickCmd"

@@ -83,9 +83,10 @@ async function moveDown(idx: number) {
             <!-- 顶部：标题 + 新增 / 关闭 -->
             <div class="flex items-center justify-between px-5 py-3 border-b border-line dark:border-line-dark shrink-0">
               <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('qc_title') }}</h3>
+              <!-- 图标按钮：+ 新增 / × 关闭（纯图标，无文字、无 title） -->
               <div class="flex items-center gap-2">
-                <button class="g-btn-primary !h-8 px-4 text-sm" @click="emit('add')">{{ t('qc_add') }}</button>
-                <button class="g-btn-ghost !h-8 px-3 text-sm" @click="close">{{ t('qc_close') }}</button>
+                <button class="g-btn-primary !h-8 !px-2 text-lg leading-none" @click="emit('add')">+</button>
+                <button class="g-btn-ghost !h-8 !px-2 text-lg leading-none" @click="close">×</button>
               </div>
             </div>
 
@@ -115,54 +116,62 @@ async function moveDown(idx: number) {
               @click="emit('run', c)"
             >
               <div class="px-3.5 py-2.5">
+                <!-- 第一行：命令名称 + 自动执行标签，右侧同一行右对齐四个图标按钮（编辑/删除/上移/下移） -->
                 <div class="flex items-center gap-2 min-w-0">
-                  <span class="text-sm font-semibold text-ink dark:text-ink-dark truncate">{{ c.name }}</span>
+                  <span class="min-w-0 text-sm font-semibold text-ink dark:text-ink-dark truncate">{{ c.name }}</span>
                   <span
                     v-if="c.auto"
                     class="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brand-soft text-brand"
                   >
                     {{ t('qc_auto_tag') }}
                   </span>
+                  <div class="flex-1"></div>
+                  <div class="flex items-center gap-1 shrink-0">
+                    <!-- 编辑（铅笔） -->
+                    <button class="g-btn-ghost !h-7 !px-2" @click.stop="emit('edit', c)">
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                      </svg>
+                    </button>
+                    <!-- 删除（垃圾桶，红色） -->
+                    <button
+                      class="g-btn-ghost !h-7 !px-2 !text-danger hover:!bg-danger/10"
+                      @click.stop="emit('delete', c)"
+                    >
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 6h18" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6M14 11v6" />
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                      </svg>
+                    </button>
+                    <!-- 向上移动按钮（第一项不可上移） -->
+                    <button
+                      v-if="idx > 0"
+                      class="g-btn-ghost !h-7 !px-2"
+                      :title="t('qc_move_up')"
+                      :disabled="loadingReorder"
+                      @click.stop="moveUp(idx)"
+                    >
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 15l-6-6-6 6" />
+                      </svg>
+                    </button>
+                    <!-- 向下移动按钮（最后一项不可下移） -->
+                    <button
+                      v-if="idx < store.commands.length - 1"
+                      class="g-btn-ghost !h-7 !px-2"
+                      :title="t('qc_move_down')"
+                      :disabled="loadingReorder"
+                      @click.stop="moveDown(idx)"
+                    >
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
                 <p class="mt-1 text-xs font-mono text-ink-soft dark:text-ink-soft-dark truncate">{{ c.content }}</p>
-              </div>
-              <!-- 第二行：左侧 编辑/删除，右侧 上移/下移（SVG 图标） -->
-              <div class="flex items-center gap-1 px-3.5 py-2 border-t border-line dark:border-line-dark">
-                <button class="g-btn-ghost !h-7 !px-2.5 text-xs" :title="t('qc_edit')" @click.stop="emit('edit', c)">
-                  {{ t('qc_edit') }}
-                </button>
-                <button
-                  class="g-btn-ghost !h-7 !px-2.5 text-xs !text-danger hover:!bg-danger/10"
-                  :title="t('qc_delete')"
-                  @click.stop="emit('delete', c)"
-                >
-                  {{ t('qc_delete') }}
-                </button>
-                <div class="flex-1"></div>
-                <!-- 向上移动按钮（第一项不可上移） -->
-                <button
-                  v-if="idx > 0"
-                  class="g-btn-ghost !h-7 !px-2"
-                  :title="t('qc_move_up')"
-                  :disabled="loadingReorder"
-                  @click.stop="moveUp(idx)"
-                >
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 15l-6-6-6 6" />
-                  </svg>
-                </button>
-                <!-- 向下移动按钮（最后一项不可下移） -->
-                <button
-                  v-if="idx < store.commands.length - 1"
-                  class="g-btn-ghost !h-7 !px-2"
-                  :title="t('qc_move_down')"
-                  :disabled="loadingReorder"
-                  @click.stop="moveDown(idx)"
-                >
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
               </div>
             </div>
           </div>

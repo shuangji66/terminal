@@ -43,16 +43,14 @@ export const zh: Record<string, string> = {
   confirm_close_tab_msg: '确定关闭标签「{title}」？将终止该终端会话及其进程。',
   confirm_ok: '确定',
   confirm_cancel: '取消',
+  confirm_delete: '删除',
 
   // 快捷指令
   qc_title: '快捷指令',
-  qc_add: '新增',
-  qc_empty: '暂无快捷指令，点击「新增」创建。',
-  qc_edit: '编辑',
-  qc_delete: '删除',
+  qc_empty: '暂无快捷指令，点击右上角 + 创建。',
   qc_move_up: '上移',
   qc_move_down: '下移',
-  qc_auto_tag: '自动执行',
+  qc_auto_tag: 'Auto',
   qc_add_title: '新增快捷指令',
   qc_edit_title: '编辑快捷指令',
   qc_name: '命令名称',
@@ -60,7 +58,6 @@ export const zh: Record<string, string> = {
   qc_content: '命令内容',
   qc_content_placeholder: '例如：du -sh * | sort -h',
   qc_auto: '自动执行',
-  qc_auto_hint: '点击卡片输入命令后自动回车执行，否则仅输入不执行',
   qc_save: '保存',
   qc_cancel: '取消',
   qc_name_required: '请输入命令名称',
@@ -81,7 +78,6 @@ export const zh: Record<string, string> = {
   settings_font_system: '系统字体',
   settings_font_size: '终端字号',
   settings_font_size_hint: '（10–26）',
-  qc_close: '关闭',
 
   // 新建终端：选择以哪个用户启动（UserPickDialog）
   user_pick_title: '新建终端',

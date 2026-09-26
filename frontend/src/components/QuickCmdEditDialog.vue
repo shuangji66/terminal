@@ -80,7 +80,6 @@ function save() {
             <label class="flex items-center gap-2 cursor-pointer select-none">
               <input v-model="auto" type="checkbox" class="w-4 h-4 accent-brand" />
               <span class="text-sm text-ink dark:text-ink-dark">{{ t('qc_auto') }}</span>
-              <span class="text-xs text-ink-faint dark:text-ink-faint-dark">{{ t('qc_auto_hint') }}</span>
             </label>
             <p v-if="error" class="text-xs text-danger">{{ error }}</p>
           </div>

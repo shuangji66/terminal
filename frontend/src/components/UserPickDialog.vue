@@ -116,8 +116,8 @@ function confirmPickRoot() {
           >
             <div class="flex items-center justify-between shrink-0">
               <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">{{ t('user_pick_title') }}</h3>
-              <!-- × 关闭：只关弹窗、不新建会话（点弹窗外侧同为关闭） -->
-              <button class="g-btn-ghost !h-8 !px-2 text-lg leading-none" :title="t('qc_close')" @click="close">×</button>
+              <!-- × 关闭：只关弹窗、不新建会话（点弹窗外侧同为关闭）；纯图标，无 title（同 SettingsDialog） -->
+              <button class="g-btn-ghost !h-8 !px-2 text-lg leading-none" @click="close">×</button>
             </div>
 
             <!-- 常规用户 -->

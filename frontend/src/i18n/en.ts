@@ -43,14 +43,12 @@ export const en: Record<string, string> = {
   confirm_close_tab_msg: 'Close tab "{title}"? This will terminate the terminal session and its process.',
   confirm_ok: 'Confirm',
   confirm_cancel: 'Cancel',
+  confirm_delete: 'Delete',
 
   // Quick commands
   qc_title: 'Quick Commands',
-  qc_add: 'Add',
-  qc_empty: 'No quick commands yet. Click "Add" to create one.',
-  qc_edit: 'Edit',
-  qc_delete: 'Delete',
-  qc_auto_tag: 'Auto-run',
+  qc_empty: 'No quick commands yet. Click the + in the top right to create one.',
+  qc_auto_tag: 'Auto',
   qc_add_title: 'Add Quick Command',
   qc_edit_title: 'Edit Quick Command',
   qc_name: 'Name',
@@ -58,7 +56,6 @@ export const en: Record<string, string> = {
   qc_content: 'Command',
   qc_content_placeholder: 'e.g. du -sh * | sort -h',
   qc_auto: 'Auto-run',
-  qc_auto_hint: 'Press Enter automatically after typing the command when the card is clicked; otherwise only type it in',
   qc_save: 'Save',
   qc_cancel: 'Cancel',
   qc_name_required: 'Name is required',
@@ -81,7 +78,6 @@ export const en: Record<string, string> = {
   settings_font_system: 'System font',
   settings_font_size: 'Font size',
   settings_font_size_hint: '(10–26)',
-  qc_close: 'Close',
 
   // New terminal: which user to start as (UserPickDialog)
   user_pick_title: 'New Terminal',
