@@ -14,6 +14,7 @@ import { onMounted, onBeforeUnmount } from 'vue'
 //   --vvt            可视视口相对布局视口的位移 → .app-shell 上内边距（并等量补偿高度）
 //   --kb-safe-bottom 键盘弹起时为 0px、其余情况移除 → 底部辅助键条的安全区内边距
 //   --tabbar-h       顶栏实测高度 → 需要「与终端区域同高」的浮层用（终端区高 = --vvh − --tabbar-h）
+//   --tabbar-primary-h 顶栏**第一行**（标签条那一行）的实测高度 → toast 在这一行里垂直居中
 const VVH = '--vvh'
 const VVT = '--vvt'
 const KB_SAFE_BOTTOM = '--kb-safe-bottom'
@@ -21,6 +22,9 @@ const KB_SAFE_BOTTOM = '--kb-safe-bottom'
 // 由 JS 量取而非在 CSS 里按 TabBar 的 padding/border 拼算：后者一改结构就失准，
 // 且移动端第二行（py-1.5 + 28px 按钮）实际盒高比 min-h-10 多 1px，拼算会差 1px。
 const TABBAR_H = '--tabbar-h'
+// 顶栏第一行（.tabbar-primary）的实测高度。toast 要在这**一行**里垂直居中，
+// 不能用 --tabbar-h：移动端它还含第二行功能键，拿它居中会让 toast 落到第二行/分隔线上。
+const TABBAR_PRIMARY_H = '--tabbar-primary-h'
 
 // viewport 收缩超过该值即认为键盘弹起：用于「键盘覆盖底部安全区」的判断。
 // 取 80px 以避开 iOS Safari 底部地址栏收合（约 50~60px）等噪声，键盘（含中文候选栏）
@@ -35,27 +39,36 @@ export function useViewportHeight(): void {
   const root = document.documentElement
   let frame = 0
 
-  // 顶栏实测高度：与 visualViewport 无关，必须先于下面那个 early-return 挂上，
-  // 否则不支持 visualViewport 的环境里 --tabbar-h 永远缺失（浮层会按 0 处理顶栏）。
+  // 顶栏（以及顶栏第一行）实测高度：与 visualViewport 无关，必须先于下面那个 early-return
+  // 挂上，否则不支持 visualViewport 的环境里 --tabbar-h 永远缺失（浮层会按 0 处理顶栏）。
   // 本函数在 setup 中调用，此刻 <header> 尚未渲染，故实测放进 onMounted；
   // 断点切换（移动端第二行显隐）、功能名折叠、旋转等都会改变顶栏高度，故用
-  // ResizeObserver 跟踪 header 自身尺寸，而不是只在视口事件里顺带量。
+  // ResizeObserver 跟踪 header 与第一行自身尺寸，而不是只在视口事件里顺带量。
   let headerRo: ResizeObserver | null = null
-  const measureHeader = () => {
+  const measureTabbar = () => {
     const header = document.querySelector('header')
     if (header) root.style.setProperty(TABBAR_H, `${Math.round(header.getBoundingClientRect().height)}px`)
+    // 第一行（标签条）：toast 的定位带高度。纯 CSS 拼算（min-height 3rem + 安全区）
+    // 会随 TabBar 改结构失准，这里与顶栏同一套实测——量不到就留空，样式侧有回退值。
+    const primary = document.querySelector('.tabbar-primary')
+    if (primary) {
+      root.style.setProperty(TABBAR_PRIMARY_H, `${Math.round(primary.getBoundingClientRect().height)}px`)
+    }
   }
   onMounted(() => {
-    measureHeader()
+    measureTabbar()
     const headerEl = document.querySelector('header')
-    if (headerEl && window.ResizeObserver) {
-      headerRo = new ResizeObserver(() => measureHeader())
-      headerRo.observe(headerEl)
+    const primaryEl = document.querySelector('.tabbar-primary')
+    if (window.ResizeObserver) {
+      headerRo = new ResizeObserver(() => measureTabbar())
+      if (headerEl) headerRo.observe(headerEl)
+      if (primaryEl) headerRo.observe(primaryEl)
     }
   })
   onBeforeUnmount(() => {
     headerRo?.disconnect()
     root.style.removeProperty(TABBAR_H)
+    root.style.removeProperty(TABBAR_PRIMARY_H)
   })
 
   const vv = window.visualViewport

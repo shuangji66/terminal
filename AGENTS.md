@@ -174,7 +174,9 @@
   `visualViewport` 的 `resize`/`scroll`，把可视视口几何写入 `<html>` 的 CSS 变量：
   `--vvh`（可视视口高度 = `.app-shell` 高度）、`--vvt`（可视视口相对布局视口的位移 =
   `.app-shell` 的 `top`）、`--kb-safe-bottom`（键盘弹起时 0，覆盖键条的安全区内边距）、
-  `--tabbar-h`（**实测**顶栏高度，见第 5 节「浮层与终端区域对齐」）。
+  `--tabbar-h`（**实测**顶栏高度，见第 5 节「浮层与终端区域对齐」）、
+  `--tabbar-primary-h`（**实测顶栏第一行**＝标签条那一行的高度，toast 的定位带，
+  ResizeObserver 同时观察 `header` 与 `.tabbar-primary`，见第 5 节「toast 垂直定位」）。
   不用 `100dvh` 的原因见第 5 节「虚拟键盘适配」。
 - `stores/` — `sessions`（标签 + userSpec + userLabel + 恢复/关闭 + **后端重启探测**
   `bootId`/`probeBackend`/`watchBackendRestart`/`handleSessionGone` + **`needsUserPick`**
@@ -260,6 +262,20 @@
   （宽度分别是 `max-w-lg`（快捷指令）/ `max-w-sm`（新建终端、设置））；
   窄屏/键盘弹起时会变成内部滚动，别把 `overflow-y-auto`（设置）与内层列表的
   `flex-1 min-h-0 overflow-y-auto`（快捷指令、选人窗）删掉。
+- **toast 垂直定位（定位带 = 顶栏第一行，不要写死 top 值）**：`Toast.vue` 的定位带是
+  **顶栏第一行**（标签条那一行）：`top: var(--vvt, 0px)`（与 `.app-shell` 同一基准，
+  键盘弹起时不脱节）+ `min-height: var(--tabbar-primary-h, calc(3rem + env(safe-area-inset-top, 0px)))`
+  + `flex flex-col items-center justify-center`，toast 在带内垂直居中。**不要退回
+  `fixed top-3`**（12px，桌面 48px 高的第一行下会骑跨到标签栏与终端的分隔线上，实测
+  用户就是这么反馈的）；**也不要用 `--tabbar-h`**：移动端它含第二行功能键，
+  拿它居中会让 toast 落到第二行/分隔线上（实测 390×844 下 `--tabbar-h`=90、第一行=48）。
+  `--tabbar-primary-h` 由 `useViewportHeight()` 实测 `.tabbar-primary`（与 `--tabbar-h`
+  同一套 ResizeObserver，同时观察 header 与第一行），**不要在 CSS 里拼算**。
+  多条同时出现时：装得下就整组居中，装不下时容器靠 `min-height` 向下扩展（第一条贴第一行
+  顶部、后续往下排），**不会溢出到屏幕顶部之外**（刘海/状态栏下不会半条看不见）。
+  实测（Playwright + 真实产物，桌面 1280×800 / 平板 1024×768 / 移动 390×844 三档）：
+  单条 toast 中心 24.0 = 第一行中心 24.0、矩形 5..43 落在第一行 0..48 内；多条（2 条）
+  时第一条 top=0、第二条 top=46，无溢出。
 - **历史文件必须以 `O_RDWR` 打开**：`O_WRONLY` 打开后 attach 回放 / history API 读取
   会得到 `bad file descriptor`（EBADF）。
 - **PTY 按用户切换依赖 root**：非 root 进程对 `user=root` 或不同 uid 会 `permission
