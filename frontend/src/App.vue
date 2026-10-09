@@ -34,7 +34,8 @@ const settingsVisible = ref(false)
 
 onMounted(async () => {
   document.title = t('app_name')
-  // 先加载运行信息，再恢复会话：无会话可恢复时固定以当前登录用户（NAS 用户）建立会话。
+  // 先加载运行信息（含后端进程实例 bootId，用于判定后端是否已重启），再恢复会话。
+  // 无会话可恢复时**不自动建会话**：store 置位 needsUserPick，由 TabBar 弹选人窗。
   await store.loadInfo()
   // 冷启动预取一次应用用户列表，之后「新建终端」的选择弹窗直接读缓存。
   // 缓存只存在内存里（不落 localStorage），因此每次冷启动都是空缓存 → 天然重新拉取一遍。

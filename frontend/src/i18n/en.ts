@@ -15,6 +15,8 @@ export const en: Record<string, string> = {
   conn_detached: 'Session opened on another device',
   conn_detached_hint: 'This session is now open on another device. Click Reconnect to continue here.',
   conn_not_found: 'Session not found',
+  conn_backend_restarted: 'Backend restarted — previous sessions are gone. Pick a user again.',
+  conn_session_gone: 'This session no longer exists (closed on another device?)',
   ws_error: 'WebSocket error, or closed by fnOS',
 
   act_quick_cmds: 'Commands',

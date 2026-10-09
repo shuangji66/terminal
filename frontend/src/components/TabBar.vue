@@ -33,6 +33,18 @@ function onUserPicked(spec: UserSpec) {
   store.addTab({ userSpec: spec })
 }
 
+// store 请求选人（冷启动无会话可恢复 / 后端重启后标签被清空）：自动弹出选人窗，
+// 与「关掉最后一个标签」完全同一交互——前端不替用户决定以谁进入 bash。
+// 立即消费标志，避免同一标志反复弹窗；用户直接关掉弹窗时不建会话（此时无标签）。
+watch(
+  () => store.needsUserPick,
+  (v) => {
+    if (!v) return
+    store.clearUserPick()
+    onAddTab()
+  }
+)
+
 // ---------- 标签条：向左常驻“新建”按钮 + 拖拽/滚轮横滚 ----------
 const tabStripRef = ref<HTMLElement | null>(null)
 

@@ -20,6 +20,12 @@ var terminalVersion = "dev"
 // stopCh is closed when the process should shut down gracefully.
 var stopCh = make(chan struct{})
 
+// bootID 是本次进程实例的随机标识（每次启动都不同），经 /api/info 的 bootId 下发。
+// 前端把它当作「后端是否已重启」的唯一判据：进程重启后旧会话全部不复存在（退出时会话
+// 临时目录被整目录删除），页面必须清空全部标签、让用户重新选择用户，而不是拿旧 id
+// 静默重建会话。
+var bootID = newID()
+
 func logger() *log.Logger {
 	return log.New(os.Stdout, "[Terminal] ", log.LstdFlags)
 }

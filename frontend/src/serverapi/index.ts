@@ -77,6 +77,11 @@ export interface RuntimeInfo {
   home: string
   version: string
   lang: string
+  /**
+   * 后端**进程实例**标识（每次启动都不同）。前端用它判断后端是否已重启：
+   * 值变了说明会话全都没了，页面要清空标签并重新让用户选择用户。
+   */
+  bootId?: string
   trimUid?: string // 网关 X-Trim-Userid 原始值
   nasUser?: NasUserInfo
   currentUid?: number

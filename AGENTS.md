@@ -43,12 +43,14 @@
 
 - `main.go` — 入口：解析环境 → 建目录（会话临时目录、快捷指令文件目录）→
   unix socket 监听 → 等信号优雅退出：终止全部会话、删 socket、**删除会话临时目录**。
+  另有**每进程唯一的 `bootID`**（随机生成，经 `/api/info` 下发，见第 5 节「前端不自行进入 bash」）。
 - `config.go` — `RuntimeEnv` 全部来自环境变量（`TERMINAL_ADMIN_SOCK/BASEURL`、
   `QUICK_CMDS_FILE`、`SESSION_DIR`、`APP_HOME_TEMPLATE`、
   `APPCENTER_CLI`、`SHELL`、HOME/PATH/LANG）。
 - `admin.go` — Admin mux：`/api/*` 路由（info / sessions / apps / session /
   session/clear / quickcmds）+ SPA（baseurl 注入 + `serveBytes` 逐类设 `Cache-Control`）
-  + WebSocket `/terminal` 分发。`/api/apps` 返回弹窗用的应用用户列表（含 `homeTemplate`，前端据此提示家目录，
+  + WebSocket `/terminal` 分发。`/api/info` 除运行时信息外还下发 **`bootId`**（进程实例
+  标识）；`/api/apps` 返回弹窗用的应用用户列表（含 `homeTemplate`，前端据此提示家目录，
   不硬编码路径）。
 - `sessions.go` — 会话管理：每个会话一个 PTY + 历史临时文件（**必须以 `O_RDWR` 打开**，
   否则 attach 回放 / history API 读会 EBADF）；`resolveRunUser` 解析 `user=` 参数与
@@ -76,8 +78,9 @@
 - **强制 Composition API + `<script setup>` + TypeScript**。
 - `App.vue` — 壳：TabBar + 终端面板区（标签用 `visibility` 隐藏以保持尺寸/WS 存活）+
   各弹窗（快捷指令 / 设置 / 确认）；启动顺序：`loadInfo` →（预取一次应用用户列表，见第 5 节
-  「应用用户列表缓存」）→ `restore`。**用户不再有全局「启动用户模式」**：`restore` 在无会话
-  可恢复时固定以当前登录用户（`nas`）建立会话；新建标签时的用户选择见 `TabBar`。
+  「应用用户列表缓存」）→ `restore`。**用户不再有全局「启动用户模式」**：`restore` 只恢复
+  `/api/sessions` 里仍在运行的会话，**无会话可恢复时不再自动建会话**，而是置位 store 的
+  `needsUserPick`，由 `TabBar` 弹 `UserPickDialog`（见第 5 节「前端不自行进入 bash」）。
 - `TabBar.vue` — 顶栏：新建（常驻左侧）、标签条（拖拽/滚轮横滚、双击重命名、常驻
   关闭按钮；**标签宽度随标题文本自适应**，只用 `max-w-[220px] sm:max-w-[280px]` 兜底 +
   `truncate`）、桌面功能名（`labelsOn` 控制显示；《》手动折叠/展开 + 溢出自动收起）、
@@ -173,8 +176,10 @@
   `.app-shell` 的 `top`）、`--kb-safe-bottom`（键盘弹起时 0，覆盖键条的安全区内边距）、
   `--tabbar-h`（**实测**顶栏高度，见第 5 节「浮层与终端区域对齐」）。
   不用 `100dvh` 的原因见第 5 节「虚拟键盘适配」。
-- `stores/` — `sessions`（标签 + userSpec + userLabel + 恢复/关闭；默认标题为
-  `终端N:<用户>`，见第 5 节「标签上的用户标注」）、`settings`（**终端字号 + 终端字体**，
+- `stores/` — `sessions`（标签 + userSpec + userLabel + 恢复/关闭 + **后端重启探测**
+  `bootId`/`probeBackend`/`watchBackendRestart`/`handleSessionGone` + **`needsUserPick`**
+  选人窗信号，默认标题为 `终端N:<用户>`，见第 5 节「标签上的用户标注」、
+  「前端不自行进入 bash」）、`settings`（**终端字号 + 终端字体**，
   都只存 localStorage：`terminal-font-size` / `terminal-font-family`）、`quickCmds`、`toast`、`paneControls`（**按标签 uid 的注册表**，
   顶栏按钮通过激活 uid 解析，避免后台标签覆盖）、`appUsers`（应用用户列表**内存缓存** +
   **浏览器本地的置顶名单**，冷启动预取一次，见第 5 节「应用用户列表缓存」）。
@@ -194,7 +199,7 @@
    （登录用户 / ROOT / 应用用户列表，**两个常规选项必须保留在列表上方**：
    登录用户按钮直接显示当前 NAS 用户名（`/api/info` 的 `nasUser.username`，解析不到才退回
    文案），ROOT 右侧「应用用户」标题旁紧邻刷新按钮、不显示数量）；
-   冷启动且无会话可恢复时固定以当前登录用户（`nas`）建立，不弹窗。
+   **冷启动/刷新时无会话可恢复 → 不建会话，改为弹选人窗**（见第 5 节「前端不自行进入 bash」）。
    `UserPickDialog` 的关闭（× 按钮 / 点弹窗外侧）**只关弹窗、不建会话**（新建只发生在
    `@pick`）；ROOT 选项红边框红字、点击后二次确认。
 4. **标签关闭 = 唯一终止会话路径**：调用 `DELETE /api/session?id=`；浏览器断开只是
@@ -444,8 +449,35 @@
   否则会话被后端重启带走后，TerminalPane 自动重建时会退化成 `nas`——root/应用用户的标签
   会悄悄变成登录用户 shell，而标签名还显示着原用户（实测踩过）。别用运行用户名去猜
   （分不清 NAS 用户名和应用名）。
-- **标签恢复的时序**：`App.onMounted` 先 `loadInfo` 再 `restore`；无会话可恢复时
-  `restore()` 固定以当前登录用户（`nas`）建立会话，因此标签一出现就已经有会话。
+- **前端不自行进入 bash（没有会话就弹选人窗，后端重启就清空全部标签）**：
+  这是用户明确要求的行为，改代码时不要退回「没会话就自动以登录用户建一个」。
+  三条规则：
+  1) `store.restore()` 只恢复 `/api/sessions` 里的活动会话；列表为空（或请求失败）
+     → 置位 `needsUserPick`，`TabBar` 的 watcher 弹 `UserPickDialog`，**不建会话**。
+     用户关掉弹窗 = 停在无标签状态（点「+」可再选），与关掉最后一个标签后的状态一致。
+  2) 页面未关闭而后端重启：本端 WS 掉线（`TerminalPane` 的 `onclose`，且该标签
+     `tab.id` 非空 → 调 `store.watchBackendRestart()`）或点「重连」拿到
+     `session not found`（`handleData` → `store.handleSessionGone(uid)`）时，**主动探测**
+     `/api/info` 的 `bootId`：变了 = 后端换了进程 → `resetForRestart()` 清空全部标签、
+     置位 `needsUserPick`、toast `conn_backend_restarted`。**不发 DELETE**（新进程里没有
+     这些会话）；**绝不用旧 id 或原 userSpec 静默重建会话**（曾经的行为，已删）。
+  3) 只是某个会话不存在、`bootId` 未变（如另一台设备关掉了它）→ 只 `removeTab(uid, false)`
+     清掉那一个标签 + toast `conn_session_gone`，其他标签与它们的 WS 都不动；
+     若最后一个标签也没了才弹选人窗。
+  探测细节：`probeBackend()` 三态（`restarted` / `same` / `unreachable`）且 inflight 去重
+  （多个标签同时掉线只发一次请求）；`watchBackendRestart()` 按
+  `PROBE_DELAYS_MS = [0,1s,3s,8s,15s,30s]` 有界重试（新进程起来前 `/api/info` 会失败），
+  循环全局唯一、标签清空即停；拿到 `same` 就停止（网络/代理抖动不误清标签）。
+  老后端没有 `bootId`（或本页没记下基线）时一律按 `same` 处理，退化成「逐个清标签」，
+  结果仍收敛到「无标签 + 选人窗」。
+  验证方式（本次用的）：真实前端产物 + 假 WS 后端（Node 实现 `/api/info` 的 bootId、
+  `/__control/restart` 模拟重启并断开 WS）+ headless Chromium 跑 7 个场景
+  （脚本在 `/tmp/e2e/`，未入库）；沙箱里 PTY 建不起来，只能用假后端建会话。
+- **标签恢复的时序**：`App.onMounted` 先 `loadInfo`（记下 `bootId`）再 `restore`；
+  有会话可恢复时标签一出现就已按 id 挂载，**无会话可恢复时不建会话**——store 置位
+  `needsUserPick`，`TabBar` 的 watcher 立刻弹选人窗（此时页面上就是「无标签 + 选人窗」，
+  与关掉最后一个标签后的状态一致）。别把「无会话就自动建一个」加回来（用户明确要求
+  前端不自行进入 bash）。
 - **功能名折叠**：`labelsOn` 控制桌面功能名显示；仅**手动**展开（《》按钮），
   溢出**自动收起**；不要恢复旧的“宽度检测自动展开”逻辑。
 - **验证会话环境时的沙箱陷阱（曾导致误判）**：在沙箱/CI 里验证 `buildSessionEnv`，
@@ -601,7 +633,7 @@ cd backend && go vet ./...    # 需要 backend/embed 存在（可先放占位文
 - [ ] 前端资源与 API/WS 是否走 `runtimeBase()` / `wsUrl()`？
 - [ ] 是否硬编码了 platform 路径 / baseurl？
 - [ ] 会话用户逻辑（`Tab.userSpec` → `user=` 参数：`nas` / `root` / `app:<APP NAME>`）是否保持
-      「新建一律弹窗选择、冷启动无会话固定登录用户、已有会话保持原用户」？
+      「新建一律弹窗选择、**无会话/后端重启时弹窗而不自动建会话**、已有会话保持原用户」？
 - [ ] 应用用户：`HOME`、`PWD`、`cmd.Dir` 是否都取 `TERMINAL_APP_HOME_TEMPLATE` 的同一路径
       （不一致会导致提示符不显示 `~`）？新增环境变量是否会被继承值覆盖？
 - [ ] 应用列表：新增过滤条件是否同步了 `usableAppUsers` 与 `/api/apps` 的语义？

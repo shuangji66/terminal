@@ -15,6 +15,8 @@ export const zh: Record<string, string> = {
   conn_detached: '会话已在其他设备打开',
   conn_detached_hint: '该会话已在其他设备打开，点击「重连」可在此设备继续。',
   conn_not_found: '会话不存在',
+  conn_backend_restarted: '后端已重启，原有会话已失效，请重新选择用户',
+  conn_session_gone: '该会话已不存在（可能已在其他设备关闭）',
   ws_error: 'websocket 错误或被飞牛关闭',
 
   act_quick_cmds: '快捷指令',

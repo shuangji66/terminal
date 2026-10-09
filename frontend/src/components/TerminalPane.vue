@@ -97,9 +97,6 @@ function inEmbeddedFrame(): boolean {
   }
 }
 
-// 会话不存在标记：收到 "session not found" 后丢弃旧 id，连接关闭时自动重建
-let recreateOnClose = false
-
 // 移动端辅助键的修饰键切换态
 const ctrlPressed = ref(false)
 const altPressed = ref(false)
@@ -279,11 +276,13 @@ function handleData(raw: string) {
     store.setTabStatus(props.tab.uid, 'exited')
     return ''
   })
-  // 会话已不存在（如服务端重启）：丢弃旧 id，稍后自动重建新会话
+  // 会话在后端不存在（最常见：后端进程重启过，旧会话全没了）：交给 store 判定。
+  // 是后端重启 → 清空全部标签并让用户重新选择；否则只清掉本标签。
+  // 两条路都**不自动以某个用户重建会话**（前端不替用户决定以谁进入 bash），
+  // 所以这里也不清 tab.id：万一用户此时点「重连」，只会再次拿到 not found。
   if (rest.includes('session not found')) {
-    recreateOnClose = true
-    props.tab.id = null
     rest = '\r\n\x1b[33m' + t('conn_not_found') + '\x1b[0m\r\n'
+    void store.handleSessionGone(props.tab.uid)
   }
   if (rest) {
     term?.write(rest)
@@ -362,19 +361,13 @@ function openSocket() {
       markDetached()
       return
     }
-    if (recreateOnClose) {
-      // 旧会话已不存在：自动重建新会话
-      recreateOnClose = false
-      if (!disposed) {
-        store.setTabStatus(props.tab.uid, 'connecting')
-        openSocket()
-      }
-      return
-    }
     if (!disposed) {
       term?.writeln('\r\n\x1b[31m' + t('conn_closed') + '\x1b[0m')
       scrollToBottom()
     }
+    // 已挂载过真实会话却异常掉线：后端可能已经重启（重启后旧会话全没了）。
+    // 主动探测一次——确认换了进程就清空全部标签并弹选人窗，不必等用户点「重连」。
+    if (!disposed && props.tab.id) store.watchBackendRestart()
   }
   sock.onerror = () => {
     const c = myCtl()

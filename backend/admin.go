@@ -75,6 +75,8 @@ func (m *AdminMux) handleInfo(w http.ResponseWriter, r *http.Request) {
 			"home":          m.renv.Home,
 			"version":       m.renv.Version,
 			"lang":          m.renv.Lang,
+			// 本次进程实例的随机标识：前端据此判断后端是否已重启（见 main.go 的 bootID）
+			"bootId": bootID,
 			// 网关 unix sock 传递的当前 NAS 用户（X-Trim-Userid），缺失时回退进程用户
 			"trimUid":    r.Header.Get("X-Trim-Userid"),
 			"nasUser":    nasUserInfo(m.renv, r.Header.Get("X-Trim-Userid")),
