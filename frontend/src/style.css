@@ -251,17 +251,31 @@ body {
  * - (hover: none) 下让滑块常驻可见并恢复可命中，热区向左右各扩 4px 方便手指按住；
  * - 滑块 touch-action: none：防止拖滑块被浏览器认领为页面平移（iOS 橡皮筋回弹）。
  *   .term-container 虽已声明 touch-action: none，内部元素按规范会继承该约束，但部分
- *   老内核对非「可滚动目标」的继承不可靠，显式声明兜底。 */
+ *   老内核对非「可滚动目标」的继承不可靠，显式声明兜底。
+ * ⚠️ 这里给滚动条/滑块补的 visibility 只能写 `inherit`（见下方注释），不能写 `visible`。 */
 .xterm .xterm-scrollable-element > .scrollbar.vertical,
 .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
   touch-action: none;
 }
 
 @media (hover: none) {
+  /* ⚠️ visibility 只能写 inherit，「常驻可见」不能写成 visibility: visible（踩过两次，一并记录）：
+   * ① 为什么要碰 visibility：xterm 用 `.invisible` 这个类名表示「滚动条当前不该显示」
+   *    （Auto 可见性，靠 mouse enter/leave 的 beginReveal/beginHide 切换，触屏永远等不到），
+   *    而 Tailwind 有同名工具类 `.invisible { visibility: hidden }` —— 类名撞车，触屏上
+   *    xterm 一直挂着 .invisible，滑块就被 Tailwind 的 visibility: hidden 藏掉（opacity/
+   *    pointer-events 覆盖了也没用），所以这里必须把 visibility 一起盖掉。
+   * ② 为什么不能写 visible：非激活标签的面板由 App.vue 打 Tailwind 的 .invisible
+   *    （visibility: hidden）隐藏，而 visibility 允许子元素把它重新声明回 visible —— 一旦
+   *    写死 visible，所有后台标签的滚动条都会被「复活」；面板都是 absolute inset-0（位置
+   *    完全重合），于是每个标签的滚动条（各自长度不同）叠在激活标签的滚动条上一起显示。
+   *    写成 inherit 则两全：父级可见时滑块可见（①），父级被隐藏时滑块跟着隐藏（②）。
+   * 实测（chrome-headless-shell + 触摸模拟 + 像素统计）：写 visible 时隐藏面板的滑块在
+   * 截图里被画出来（280 个滑块像素）且 elementFromPoint 命中它；写 inherit 时为 0 个像素。 */
   .xterm .xterm-scrollable-element > .scrollbar.vertical,
   .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
     opacity: 1;
-    visibility: visible;
+    visibility: inherit;
     /* xterm 的 .invisible 类同时设了 pointer-events: none，必须显式恢复，
        否则滑块虽然看得见却点不到（实测 elementFromPoint 命中不到滑块）。 */
     pointer-events: auto;

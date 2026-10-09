@@ -311,6 +311,15 @@
      `.slider` 常驻可见并恢复 `pointer-events:auto`（Auto 可见性靠 hover，触屏永远等不到，
      否则滑块抓不到；`.invisible` 类自带 `pointer-events:none` 必须显式覆盖）+ 滑块热区
      左右各扩 4px；滑块 `touch-action: none` 防止拖动被认领成页面平移。
+     ⚠️ **这三条里的 `visibility` 只能写 `inherit`，绝不能写 `visible`**（踩过两次的坑）：
+     ① xterm 用 `.invisible` 这个类名表示「滚动条当前不该显示」，而 Tailwind 有**同名工具类**
+     `.invisible { visibility: hidden }` —— 触屏上 xterm 一直挂着该类，光覆盖 opacity/
+     pointer-events 不够，滑块会被 Tailwind 藏掉，所以必须连 `visibility` 一起覆盖；
+     ② 非激活标签的面板正是 App.vue 用 Tailwind `.invisible`（`visibility: hidden`）隐藏的，
+     而 visibility 允许子元素把祖先的 hidden 声明回 `visible`——写死 `visible` 会让**所有后台
+     标签的滚动条一起显形**（面板都是 `absolute inset-0`、位置完全重合，于是每个标签的滚动条
+     ——长度各不相同——叠在激活标签的滚动条上；同时还能接住触摸）。`inherit` 两全其美：
+     父级可见时滑块可见，父级被隐藏时滑块跟着隐藏。
      ⚠️ 选择器必须带 `.vertical`：`.xterm-scrollable-element > .scrollbar.vertical > .slider`，
      因为同层还有一个 `.scrollbar.horizontal`（不特指会查到横条）。
      ⚠️ 6.0.0 类名是 `.scrollbar/.slider/.active/.invisible`（beta 才是 `.xterm-scrollbar`
