@@ -128,23 +128,48 @@ var (
 	appListMu  sync.Mutex
 	appListAt  time.Time
 	appListVal []appEntry
+	// appListInflight 非 nil 表示已有一轮 appcenter-cli 调用在进行：并发请求等它结束再
+	// 复用结果/缓存，而不是各自拉起一个子进程。**不再用 appListMu 覆盖整个子进程执行**
+	// （最长 appListTimeout）：那把锁会把「本可以命中缓存」的请求也一起堵住。
+	appListInflight chan struct{}
 )
 
-// listAppUsers 返回可用于新建终端的应用用户列表（结果短暂缓存）。
+// listAppUsers 返回可用于新建终端的应用用户列表（结果短暂缓存，并发调用做单飞）。
 func listAppUsers(renv *RuntimeEnv) ([]appEntry, error) {
-	appListMu.Lock()
-	defer appListMu.Unlock()
-	if appListVal != nil && time.Since(appListAt) < appListTTL {
-		return appListVal, nil
+	for {
+		appListMu.Lock()
+		if appListVal != nil && time.Since(appListAt) < appListTTL {
+			cached := appListVal
+			appListMu.Unlock()
+			return cached, nil
+		}
+		if appListInflight != nil {
+			wait := appListInflight
+			appListMu.Unlock()
+			<-wait // 等这一轮结束（无论成败），回到循环重查缓存/重试
+			continue
+		}
+		appListInflight = make(chan struct{})
+		appListMu.Unlock()
+		break
 	}
+
 	raw, err := fetchAppList(renv)
-	if err != nil {
-		return nil, err
+	var apps []appEntry
+	if err == nil {
+		// 解析过滤（含每个应用的 /etc/passwd 查询与家目录 stat）放在锁外做，别占着锁
+		apps = usableAppUsers(renv, raw)
 	}
-	apps := usableAppUsers(renv, raw)
-	appListVal = apps
-	appListAt = time.Now()
-	return apps, nil
+
+	appListMu.Lock()
+	if err == nil {
+		appListVal = apps
+		appListAt = time.Now()
+	}
+	close(appListInflight)
+	appListInflight = nil
+	appListMu.Unlock()
+	return apps, err
 }
 
 // fetchAppList 优先执行 appcenter-cli list；失败（未安装 / 无权限 / 输出为空）时

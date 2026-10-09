@@ -30,6 +30,7 @@ import {
   resizePayload,
   HEARTBEAT_PAYLOAD,
   DETACHED_PAYLOAD,
+  SESSION_GONE_PAYLOAD,
   WS_CLOSE_DETACHED,
   api
 } from '@/serverapi'
@@ -73,7 +74,6 @@ const HEARTBEAT_INTERVAL_MS = 20000
 let heartbeatTimer: number | null = null
 let resizeObserver: ResizeObserver | null = null
 let fitRetryTimer: number | null = null
-let onPasteEvent: ((ev: ClipboardEvent) => void) | null = null
 let toastTimer: number | null = null
 let repeatTimer: number | null = null
 
@@ -276,11 +276,14 @@ function handleData(raw: string) {
     store.setTabStatus(props.tab.uid, 'exited')
     return ''
   })
-  // 会话在后端不存在（最常见：后端进程重启过，旧会话全没了）：交给 store 判定。
+  // 会话在后端不存在（最常见：后端进程重启过，旧会话全没了）：后端把该控制帧附在错误
+  // 文本帧末尾，只有它才代表「会话真的没了」——交给 store 判定。
   // 是后端重启 → 清空全部标签并让用户重新选择；否则只清掉本标签。
   // 两条路都**不自动以某个用户重建会话**（前端不替用户决定以谁进入 bash），
   // 所以这里也不清 tab.id：万一用户此时点「重连」，只会再次拿到 not found。
-  if (rest.includes('session not found')) {
+  // ⚠️ 不能改成匹配人类可读文本（"session not found"）：终端里 `echo session not found`
+  // / 日志 / grep 结果都会命中，会把好端端的活会话标签删掉。
+  if (rest.includes(SESSION_GONE_PAYLOAD)) {
     rest = '\r\n\x1b[33m' + t('conn_not_found') + '\x1b[0m\r\n'
     void store.handleSessionGone(props.tab.uid)
   }
@@ -335,7 +338,10 @@ function openSocket() {
   // root → user=root；app:<APP NAME> → user=app:<APP NAME>（NAS 应用用户）；
   // nas（默认）→ 不带 user 参数，后端读网关 X-Trim-Userid。
   const spec = props.tab.userSpec
-  const userParam = props.tab.id || spec === 'nas' ? undefined : spec
+  // user= 参数只在「新建会话（无 id）且不是登录用户」时才带：挂载已有会话按 id 进行，
+  // 用户由后端会话自己记着（Session.spec），带上反而多余。
+  // 旧写法 `props.tab.id || spec === 'nas' ? undefined : spec` 依赖 `||` 高于 `?:` 才成立，别改回去。
+  const userParam = !props.tab.id && spec !== 'nas' ? spec : undefined
   const url = wsUrl(props.tab.id ?? undefined, userParam)
   sock = new WebSocket(url)
   sock.binaryType = 'arraybuffer'
@@ -1226,17 +1232,11 @@ function initTerminal() {
     window.addEventListener('resize', debouncedFit)
   }
 
-  // 桌面端原生粘贴（Ctrl+Shift+V / 右键粘贴）
-  onPasteEvent = (ev: ClipboardEvent) => {
-    if (!sock || sock.readyState !== WebSocket.OPEN) return
-    const text = ev.clipboardData?.getData('text/plain')
-    if (text) {
-      ev.preventDefault()
-      sock.send(text)
-      pinToBottom()
-    }
-  }
-  el.value.addEventListener('paste', onPasteEvent)
+  // 粘贴**不在这里监听**：xterm 自己在 `.xterm` 与 `.xterm-helper-textarea` 上都挂了 paste
+  // 监听（`handlePasteEvent` 里 `stopPropagation()` + 走 bracketed paste 逻辑），终端有焦点时
+  // 的粘贴由它负责。曾经在本容器（.term-mount）上再加一份，结果是：终端那份永远不会冒泡到
+  // 这里（被 stopPropagation 挡掉、等于重复实现），而**搜索框的粘贴会被这里截走**并当成
+  // 键盘输入灌进 PTY（多行内容直接被 shell 执行），搜索框自己反而拿不到内容。
 
   term.onData((data) => {
     if (!sock || sock.readyState !== WebSocket.OPEN) return
@@ -1397,10 +1397,6 @@ onBeforeUnmount(() => {
   if (fitRetryTimer) clearTimeout(fitRetryTimer)
   if (toastTimer) clearTimeout(toastTimer)
   if (repeatTimer) clearInterval(repeatTimer)
-  if (onPasteEvent && el.value) {
-    el.value.removeEventListener('paste', onPasteEvent)
-    onPasteEvent = null
-  }
   disconnect()
   if (resizeObserver) {
     resizeObserver.disconnect()

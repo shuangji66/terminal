@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -27,6 +28,10 @@ const (
 	// oscDetached 是顶号通知（OSC 控制帧，不写入 PTY）。与 close 帧双保险：
 	// 帧先到 → 立即提示；帧被代理吞掉时还能靠 close 码判定。
 	oscDetached = "\x1b]detached\x07"
+	// oscGone 是「该会话在后端不存在」的控制帧，附加在错误文本帧末尾（不写入 PTY）。
+	// 前端据此走「会话已失效」分支——**不能**再用人类可读文本匹配（"session not found"）：
+	// 终端里 `echo session not found`、日志、grep 结果都会命中，把好端端的标签删掉。
+	oscGone = "\x1b]gone\x07"
 
 	opText  = 0x1
 	opBin   = 0x2
@@ -34,6 +39,15 @@ const (
 	opClose = 0x8
 	opPing  = 0x9
 	opPong  = 0xA
+
+	// 客户端消息上限：单帧与整条消息（分片累积）。正常输入只有几十字节，粘贴才是大消息，
+	// 1MB/4MB 绰绰有余；没有上限时一个客户端就能用「超大长度头 / 无限分片」让以 root
+	// 运行的进程 OOM（承载全部会话，代价是整机）。
+	maxFrameBytes   = 1 << 20 // 1MB
+	maxMessageBytes = 4 << 20 // 4MB
+	// maxTermDimension 是 resize 允许的最大行列数：客户端给的 cols/rows 直接转 uint16，
+	// 不设上限时 70000 会被静默截断成 4464，把 PTY 设成一个莫名其妙的尺寸。
+	maxTermDimension = 1000
 )
 
 // wsFrame builds a single unmasked server->client frame.
@@ -63,7 +77,11 @@ func wsCloseFrame(code uint16, reason string) []byte {
 
 // kickDetached 通知被顶掉的旧连接：先发 \x1b]detached\x07，再发 close(4001)，最后关闭。
 // 写带 1s 超时：旧连接 TCP 缓冲可能已满，绝不能让这次写阻塞拖住新设备的挂载。
-func kickDetached(c net.Conn) {
+// 持 histMu 是为了不与 pump 的广播对**同一个连接**并发写（两处 write 交错会破坏帧），
+// 超时上限 1s 也保证它不会长期占住 histMu 而拖慢新端挂载。
+func kickDetached(s *Session, c net.Conn) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
 	_ = c.SetWriteDeadline(time.Now().Add(time.Second))
 	_, _ = c.Write(wsFrame(opText, []byte(oscDetached)))
 	_, _ = c.Write(wsCloseFrame(wsCloseTaken, "detached"))
@@ -100,6 +118,11 @@ func wsReadFrame(r io.Reader) (byte, bool, []byte, error) {
 		if _, err := io.ReadFull(r, mask[:]); err != nil {
 			return 0, false, nil, err
 		}
+	}
+	// 帧长先校验上限再分配：长度字段由客户端给（最大 2^63-1），直接 make 会成为
+	// 一条消息打爆进程内存的入口。
+	if ln > maxFrameBytes {
+		return 0, false, nil, fmt.Errorf("websocket frame too large: %d bytes", ln)
 	}
 	payload := make([]byte, ln)
 	if _, err := io.ReadFull(r, payload); err != nil {
@@ -175,6 +198,9 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		conn.Write(wsFrame(opText, []byte("\x1b]id;"+s.id+"\x07")))
 		if _, aerr := s.attach(conn); aerr != nil {
+			// 挂载失败（多半是写不出去）：这个会话已经没人能认领了（id 虽然发出过，
+			// 但连接已坏、前端拿不到），直接回收，避免在表里留一个孤儿会话。
+			_ = t.mgr.closeByID(s.id)
 			conn.Close()
 			return
 		}
@@ -182,7 +208,8 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s, ok := t.mgr.get(id)
 		if !ok {
-			conn.Write(wsFrame(opText, []byte("\r\n\x1b[31msession not found: "+id+"\x1b[0m\r\n")))
+			// 文本帧给人看（非本前端的客户端也能看懂），末尾的 oscGone 控制帧给前端判定用
+			conn.Write(wsFrame(opText, []byte("\r\n\x1b[31msession not found: "+id+"\x1b[0m\r\n"+oscGone)))
 			conn.Write(wsFrame(opClose, nil))
 			conn.Close()
 			return
@@ -194,7 +221,7 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if prev != nil {
-			kickDetached(prev)
+			kickDetached(s, prev)
 		}
 	}
 
@@ -212,6 +239,11 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if op != opCont {
 				msgBuf = msgBuf[:0]
 			}
+			// 分片累积也要有上限（见 maxMessageBytes）：否则客户端可以无限续帧，
+			// msgBuf 会一直涨到进程被 OOM 掉。
+			if len(msgBuf)+len(payload) > maxMessageBytes {
+				goto done
+			}
 			msgBuf = append(msgBuf, payload...)
 			if !fin {
 				continue
@@ -223,7 +255,8 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if len(parts) == 2 {
 					cols, err1 := strconv.Atoi(parts[0])
 					rows, err2 := strconv.Atoi(parts[1])
-					if err1 == nil && err2 == nil && cols > 0 && rows > 0 {
+					if err1 == nil && err2 == nil &&
+						cols > 0 && cols <= maxTermDimension && rows > 0 && rows <= maxTermDimension {
 						if sess, ok := t.mgr.get(id); ok {
 							// 只有操作端的尺寸生效（被顶掉的旧设备会随后触发一次重排）
 							if err := sess.resize(conn, uint16(cols), uint16(rows)); err != nil && !errors.Is(err, errNotOwner) {
@@ -243,7 +276,7 @@ func (t *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case opPing:
-			conn.Write(wsFrame(opPong, payload))
+			_ = writeFramed(conn, wsFrame(opPong, payload))
 		case opClose:
 			goto done
 		}

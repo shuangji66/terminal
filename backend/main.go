@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -17,9 +18,6 @@ var embeddedFS embed.FS
 // terminalVersion is the version injected via -ldflags (default "dev").
 var terminalVersion = "dev"
 
-// stopCh is closed when the process should shut down gracefully.
-var stopCh = make(chan struct{})
-
 // bootID 是本次进程实例的随机标识（每次启动都不同），经 /api/info 的 bootId 下发。
 // 前端把它当作「后端是否已重启」的唯一判据：进程重启后旧会话全部不复存在（退出时会话
 // 临时目录被整目录删除），页面必须清空全部标签、让用户重新选择用户，而不是拿旧 id
@@ -28,11 +26,6 @@ var bootID = newID()
 
 func logger() *log.Logger {
 	return log.New(os.Stdout, "[Terminal] ", log.LstdFlags)
-}
-
-// netListen is a thin wrapper so admin.go can reference it.
-func netListen(network, addr string) (net.Listener, error) {
-	return net.Listen(network, addr)
 }
 
 func main() {
@@ -60,24 +53,39 @@ func main() {
 	admin := newAdminMux(&renv)
 	admin.SetSPA(embeddedFS)
 
+	// 先绑定再进信号等待：绑定失败就退出（而不是空转），失败信息进日志由 supervisor 兜底。
+	ln, err := listenAdminSocket(&renv)
+	if err != nil {
+		logger().Printf("admin socket listen %s: %v", renv.AdminSock, err)
+		os.Exit(1)
+	}
+	srv := &http.Server{Handler: admin.buildHandler()}
+	srvErr := make(chan error, 1)
 	go func() {
-		if err := serveAdminSocket(admin); err != nil && err != http.ErrServerClosed {
-			logger().Printf("admin socket server: %v", err)
+		if serr := srv.Serve(ln); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
+			srvErr <- serr
 		}
 	}()
 
-	// 等待退出信号
+	// 等待退出信号（或 accept 彻底失败：此时已没有可用入口，按进程退出处理）
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	exitCode := 0
 	select {
 	case <-sig:
-	case <-stopCh:
+	case serr := <-srvErr:
+		logger().Printf("admin socket server: %v", serr)
+		exitCode = 1
 	}
 
-	// 优雅退出：终止所有会话进程 → 删除临时会话目录
+	// 优雅退出：先停掉入口（不再接受新请求/新会话）→ 终止全部会话 → 删除 socket 与会话目录。
+	// 曾经只在 goroutine 里等一个**从不关闭**的 stopCh，srv.Close() 永远不执行，
+	// 上面这些清理是在 server 仍在服务时做的。
+	_ = srv.Close()
 	admin.sessions.CloseAll()
 	os.Remove(renv.AdminSock)
 	if createdSessionDir {
 		os.RemoveAll(renv.SessionDir)
 	}
+	os.Exit(exitCode)
 }

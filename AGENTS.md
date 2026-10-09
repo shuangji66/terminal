@@ -41,9 +41,10 @@
 
 **后端（Go，`backend/`）**
 
-- `main.go` — 入口：解析环境 → 建目录（会话临时目录、快捷指令文件目录）→
-  unix socket 监听 → 等信号优雅退出：终止全部会话、删 socket、**删除会话临时目录**。
-  另有**每进程唯一的 `bootID`**（随机生成，经 `/api/info` 下发，见第 5 节「前端不自行进入 bash」）。
+- `main.go` — 入口：解析环境 → 建目录 → unix socket **先绑定成功再进信号等待**
+  （`listenAdminSocket`，失败即 `os.Exit(1)`；旧实现 bind 失败只打日志，进程会「活着但没有任何
+  socket」）→ 等信号：先 `srv.Close()` 停入口，再终止全部会话、删 socket、**删会话临时目录**。
+  另有**每进程唯一的 `bootID`**（经 `/api/info` 下发，见第 5 节「前端不自行进入 bash」）。
 - `config.go` — `RuntimeEnv` 全部来自环境变量（`TERMINAL_ADMIN_SOCK/BASEURL`、
   `QUICK_CMDS_FILE`、`SESSION_DIR`、`APP_HOME_TEMPLATE`、
   `APPCENTER_CLI`、`SHELL`、HOME/PATH/LANG）。
@@ -59,19 +60,24 @@
   切换用户；`attach` 在 `histMu` 内“回放历史 + 接管实时流”，保证字节不重不漏，并返回
   **被顶掉的旧连接**（单挂载点，见第 5 节）；`writeInput`/`resize` 只接受当前操作端的请求
   （`isOwner`，非操作端返回 `errNotOwner`）；
-  pump 协程持续读 PTY → 追加历史文件 + 广播到已挂载连接。
+  pump 协程持续读 PTY → 追加历史文件 + 广播到已挂载连接（**写带超时**，见第 5 节
+  「会话清理与消息上限」）；`close()` 把「Kill 后被信号杀死」视为**正常终止**（否则 `DELETE`
+  会对运行中的会话回 404）。`user=` 里的未知值/非法 `X-Trim-Userid` 一律报错，不再静默回退。
 - `terminal.go` — WS 握手（自实现帧编解码）→ `id` 为空则新建（先发 `\x1b]id;<id>\x07`）
   或 `attach`（回放 + `\x1b]ready\x07`）；OSC 控制消息：`resize` / `ping` 不进 PTY；
   客户端断开**只解挂载不杀会话**；挂载成功即成为唯一操作端，旧连接由 `kickDetached`
-  （`\x1b]detached\x07` + WS close 4001）通知并关闭。
-- `quickcmds.go` — 快捷指令整体保存（tmp + rename 原子写，兼容旧版裸数组格式）。
+  （`\x1b]detached\x07` + WS close 4001，持 `histMu` 写以免与 pump 的广播交错）通知并关闭。
+  帧长/消息/`resize` 行列都有上限，会话不存在时附 `\x1b]gone\x07` 控制帧（见第 5 节）。
+- `quickcmds.go` — 快捷指令整体保存（tmp + rename 原子写，兼容旧版裸数组格式），
+  请求体限 1MB。
 - `apps.go` — 应用用户（NAS 应用）支持：执行 `appcenter-cli list` 解析 **APP NAME**，
   过滤 `trim.*` 系统软件与「无同名系统用户 / 家目录不存在」的应用，按名排序后供
   `/api/apps` 返回；`resolveAppRunUser` 把 `app:<APP NAME>` 解析为 uid/gid/HOME
   （模板 `TERMINAL_APP_HOME_TEMPLATE`，默认 `/var/apps/%s/home`）。
   **该目录必须真实存在**——它是 `cmd.Dir` 与 `HOME`，不存在会导致 `pty.Start` 失败。
-  `listAppUsers` 对结果做**短缓存**（`appListTTL`）并限制命令超时（`appListTimeout`），
-  避免每次弹窗都拉起进程或被子进程卡死；`fetchAppList` 失败时回退 `scanAppRoot`。
+  `listAppUsers` 做**短缓存**（`appListTTL`）+ 命令超时（`appListTimeout`），失败不写缓存；
+  并发用 `appListInflight` 单飞、**锁不覆盖子进程执行**（旧实现整段 CLI 期间持锁，连命中的
+  缓存请求也被堵住）。
 
 **前端（Vue 3，`frontend/`）**
 
@@ -115,6 +121,8 @@
   （`attachCustomKeyEventHandler`，拦替代码键，见第 5 节「xterm 锁定 6.0.0」第 8 条）；辅助功能键
   （`KeypadBar`）按键修饰符输入一次后自动解除；
   向 `paneControls` 注册命令入口（paste/clear/reconnect/search/focus/send）。
+  **不要在容器上另挂 paste 监听**：xterm 自己在 `.xterm`/textarea 上监听并 `stopPropagation()`
+  （终端路径不冒泡到容器），容器上那份只会截走**搜索框**的粘贴灌进 PTY（已删）。
 - `KeypadBar.vue` — 移动端辅助键条（**两页**：第一页 ESC/Tab/Ctrl/Alt/Shift/Insert/←↓→/符号
   `/-=".`（`.` 在 `"` 右侧）；
   第二页第一行 `!@#$%^&*`，第二行依次是 , ; [ ] \ ` ( )（8 个；反引号在 `\` 与 `(` 之间））；
@@ -204,8 +212,8 @@
    **冷启动/刷新时无会话可恢复 → 不建会话，改为弹选人窗**（见第 5 节「前端不自行进入 bash」）。
    `UserPickDialog` 的关闭（× 按钮 / 点弹窗外侧）**只关弹窗、不建会话**（新建只发生在
    `@pick`）；ROOT 选项红边框红字、点击后二次确认。
-4. **标签关闭 = 唯一终止会话路径**：调用 `DELETE /api/session?id=`；浏览器断开只是
-   “解挂载”，会话继续运行并写历史文件。
+4. **关标签 = 终止「运行中」会话的唯一路径**：调用 `DELETE /api/session?id=`；浏览器断开
+   只是“解挂载”，会话继续运行并写历史文件（**已退出**的会话由后端自动回收，见第 5 节）。
 5. **清屏必须同步**：前端 `term.clear()` 同时调用 `/api/session/clear` 截断历史文件。
 6. **前端状态**：优先 Composition API；共享状态进 Pinia；可复用逻辑进 composables；
    i18n / 主题 / 字号 / **应用置顶名单**只存 localStorage（都不持久化到后端）。
@@ -238,12 +246,13 @@
 
 ## 5. 常见的坑（Gotchas）
 
-- **浮层与「终端区域」对齐（三个弹窗的尺寸依据）**：终端区域 = `.app-shell`
+- **浮层与「终端区域」对齐（弹窗的尺寸依据）**：终端区域 = `.app-shell`
   （高度 `--vvh`、顶部偏移 `--vvt`）**减去顶栏**（`--tabbar-h`，移动端含第二行；
   `useViewportHeight()` 实测 `<header>`，`onMounted` 首测 + `ResizeObserver` 跟踪，
   断点切换/功能名折叠/旋转后自动更新）**再减去底部辅助键条**（`--keypad-h`，移动端才有，
-  由 KeypadBar 自报，见上）。**快捷指令 / 新建终端 / 设置三个弹窗统一用 style.css 的
-  `.term-region-center`**（定位带 = 终端区域本身）：`top: calc(var(--vvt,0px) +
+  由 KeypadBar 自报，见上）。**所有弹窗统一用 style.css 的 `.term-region-center`**
+  （定位带 = 终端区域本身）：快捷指令列表 / 快捷指令编辑 / 新建终端 / 设置 / 确认框
+  （`ConfirmDialog`，含关标签、删除快捷指令、root 二次确认）：`top: calc(var(--vvt,0px) +
   var(--tabbar-h,0px))`、`height: calc(var(--vvh,100dvh) - var(--tabbar-h,0px) -
   var(--keypad-h,0px))`；面板在带内**垂直居中**并用 `max-h-[90%]` 限高
   （= 终端区域的 90%，上下各留 5%）——内容短时保持自然高度（**不与终端区域等高**），
@@ -258,10 +267,10 @@
   **不要**在 CSS 里按 TabBar 的 padding/border 拼算顶栏高（改结构即失准；移动端第二行
   实测盒高比 `min-h-10` 多 1px，拼算会差 1px）。三个变量都写了回退值（缺失按 0），
   缺失时不会塌高。
-  使用情况：三个弹窗都是 `.term-region-center` + 面板 `max-h-[90%] pointer-events-auto`
-  （宽度分别是 `max-w-lg`（快捷指令）/ `max-w-sm`（新建终端、设置））；
-  窄屏/键盘弹起时会变成内部滚动，别把 `overflow-y-auto`（设置）与内层列表的
-  `flex-1 min-h-0 overflow-y-auto`（快捷指令、选人窗）删掉。
+  使用情况：各弹窗都是 `.term-region-center` + 面板 `max-h-[90%] pointer-events-auto`
+  （宽度分别是 `max-w-lg`（快捷指令列表）/ `max-w-md`（快捷指令编辑）/ `max-w-sm`
+  （新建终端、设置、确认框））；窄屏/键盘弹起时会变成内部滚动，别把 `overflow-y-auto`
+  （设置、编辑、确认框）与内层列表的 `flex-1 min-h-0 overflow-y-auto`（快捷指令、选人窗）删掉。
 - **toast 垂直定位（定位带 = 顶栏第一行，不要写死 top 值）**：`Toast.vue` 的定位带是
   **顶栏第一行**（标签条那一行）：`top: var(--vvt, 0px)`（与 `.app-shell` 同一基准，
   键盘弹起时不脱节）+ `min-height: var(--tabbar-primary-h, calc(3rem + env(safe-area-inset-top, 0px)))`
@@ -412,12 +421,27 @@
   **重复赋同一个字符串不会触发 `measure()`**，这也是别用「重新赋相同值」当解法更新的原因。
   实测证据（Playwright，`?nogl=1` 走 DOM 渲染器读 `.xterm-rows` 行高）：行高 21px = Maple 的
   21px（兜底字体是 22px），26px 下 35px = Maple 的 35px。
+- **会话清理与消息上限（后端，别只改一半）**：① `exited`（shell 已退出）的会话**不恢复成
+  标签**（`restore()` 按 `/api/sessions` 的 `exited` 过滤）——PTY 已死、`\x1b]exit\x07` 只在退出
+  那一刻发给当时挂载的连接，重新挂载只会得到「状态点变绿、打字没人接」的僵尸标签；
+  后端 `reapWhenExited` 在退出满 `exitedGrace`（10 分钟）后回收它，**只回收已退出的**，
+  运行中的仍只能 `DELETE /api/session`。② 帧与请求体都有上限：`maxFrameBytes`(1MB，先校验
+  再 `make`)、`maxMessageBytes`(4MB 分片累积)、`maxTermDimension`(1000，否则 `uint16` 截断)、
+  `/api/quickcmds` 的 `MaxBytesReader`(1MB→413)。③ **向连接的写必须带写超时**：广播在
+  `histMu` 内做，一个不读数据的客户端会让 `Write` 永久阻塞并占住 `histMu`，把同会话的
+  `attach`/`history`/`clear` 全堵死——`connWriteTimeout`(5s) / `kickDetached`(1s) 超时即
+  `detach` + 关连接。deadline 是持续的：设过之后任何裸 `conn.Write` 都会立刻失败，新写走
+  `writeFramed`。
 - **会话控制帧不写入 PTY**：`\x1b]resize;...\x07`、`\x1b]ping\x07` 与 `\x1b]id;` /
-  `\x1b]ready\x07` / `\x1b]exit\x07` / `\x1b]detached\x07` 均为前后端约定的 OSC 控制序列。
+  `\x1b]ready\x07` / `\x1b]exit\x07` / `\x1b]detached\x07` / `\x1b]gone\x07` 均为前后端
+  约定的 OSC 控制序列。**`\x1b]gone\x07`（会话在后端不存在）必须按控制帧判定，不能匹配
+  人类可读文本**：曾经前端匹配 `"session not found"`，于是在终端里 `echo session not
+  found`（或日志、grep 结果）就会把活会话的标签误删。
 - **单挂载点（一个会话只在一台设备上进行）**：`Session.attach()` 先回放历史+发 ready，
-  再在 `histMu`/`connMu` 内**原子换主**并返回旧连接；`terminal.go` 的 `kickDetached()`
+  再在 `histMu`/`connMu` 内**原子换主**并返回旧连接；`terminal.go` 的 `kickDetached(s, c)`
   给旧连接发 `\x1b]detached\x07`（先）与 **close 码 4001**（后，双保险，帧被代理吞掉也能
-  靠码判定），写带 1s 超时——旧连接 TCP 缓冲可能已满，**绝不能让这次写阻塞新端的挂载**。
+  靠码判定），写带 1s 超时——旧连接 TCP 缓冲可能已满，**绝不能让这次写阻塞新端的挂载**；
+  写时持 `histMu`，避免与 pump 对同一连接并发写导致帧交错。
   前端 `detached` 状态**不自动重连**（否则两端互抢），「重连」= 夺回。
   顶号只作用于该会话：同一设备上其他标签的 WS 不受影响。
   验证方式：`net.Pipe` 单测 attach/isOwner/detach 语义 + 假 WS 后端（Node，实现同样的
@@ -468,7 +492,8 @@
 - **前端不自行进入 bash（没有会话就弹选人窗，后端重启就清空全部标签）**：
   这是用户明确要求的行为，改代码时不要退回「没会话就自动以登录用户建一个」。
   三条规则：
-  1) `store.restore()` 只恢复 `/api/sessions` 里的活动会话；列表为空（或请求失败）
+  1) `store.restore()` 只恢复 `/api/sessions` 里**仍在运行**的会话（按 `exited` 过滤）；
+     过滤后为空（或请求失败）
      → 置位 `needsUserPick`，`TabBar` 的 watcher 弹 `UserPickDialog`，**不建会话**。
      用户关掉弹窗 = 停在无标签状态（点「+」可再选），与关掉最后一个标签后的状态一致。
   2) 页面未关闭而后端重启：本端 WS 掉线（`TerminalPane` 的 `onclose`，且该标签

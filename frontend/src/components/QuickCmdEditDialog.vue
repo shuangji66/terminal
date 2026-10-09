@@ -53,40 +53,45 @@ function save() {
 <template>
   <Teleport to="body">
     <Transition name="modal-fade">
-      <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div v-if="open" class="fixed inset-0 z-50">
         <div class="absolute inset-0 bg-black/50" @click="close"></div>
-        <div
-          class="relative w-full max-w-md bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop p-5"
-        >
-          <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">
-            {{ cmd ? t('qc_edit_title') : t('qc_add_title') }}
-          </h3>
+        <!-- 面板在「终端区域」内垂直居中（见 style.css 的 .term-region-center）：与快捷指令
+             列表等弹窗同一条定位带。这里尤其不能退回 fixed inset-0 居中——编辑框是文本域，
+             iOS 键盘弹起时布局视口不缩，弹窗会被键盘盖住。 -->
+        <div class="absolute left-0 right-0 term-region-center flex items-center justify-center px-4">
+          <div
+            class="relative w-full max-w-md max-h-[90%] overflow-y-auto pointer-events-auto bg-surface dark:bg-surface-dark border border-line dark:border-line-dark rounded-xl shadow-pop p-5"
+          >
+            <h3 class="font-display text-base font-semibold text-ink dark:text-ink-dark">
+              {{ cmd ? t('qc_edit_title') : t('qc_add_title') }}
+            </h3>
 
-          <div class="mt-4 space-y-3">
-            <div>
-              <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1">{{ t('qc_name') }}</label>
-              <input v-model="name" class="g-input" :placeholder="t('qc_name_placeholder')" @keydown.enter="save" />
+            <div class="mt-4 space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1">{{ t('qc_name') }}</label>
+                <input v-model="name" class="g-input" :placeholder="t('qc_name_placeholder')" @keydown.enter="save" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1">{{ t('qc_content') }}</label>
+                <textarea
+                  v-model="content"
+                  class="g-input !py-2 font-mono text-xs resize-y"
+                  rows="3"
+                  :placeholder="t('qc_content_placeholder')"
+                  spellcheck="false"
+                ></textarea>
+              </div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input v-model="auto" type="checkbox" class="w-4 h-4 accent-brand" />
+                <span class="text-sm text-ink dark:text-ink-dark">{{ t('qc_auto') }}</span>
+              </label>
+              <p v-if="error" class="text-xs text-danger">{{ error }}</p>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-ink-soft dark:text-ink-soft-dark mb-1">{{ t('qc_content') }}</label>
-              <textarea
-                v-model="content"
-                class="g-input !py-2 font-mono text-xs resize-y"
-                rows="3"
-                :placeholder="t('qc_content_placeholder')"
-                spellcheck="false"
-              ></textarea>
-            </div>
-            <label class="flex items-center gap-2 cursor-pointer select-none">
-              <input v-model="auto" type="checkbox" class="w-4 h-4 accent-brand" />
-              <span class="text-sm text-ink dark:text-ink-dark">{{ t('qc_auto') }}</span>
-            </label>
-            <p v-if="error" class="text-xs text-danger">{{ error }}</p>
-          </div>
 
-          <div class="mt-5 flex justify-end gap-2">
-            <button class="g-btn-ghost !h-9 !px-4 text-sm" @click="close">{{ t('qc_cancel') }}</button>
-            <button class="g-btn-primary !h-9 px-5 text-sm" @click="save">{{ t('qc_save') }}</button>
+            <div class="mt-5 flex justify-end gap-2">
+              <button class="g-btn-ghost !h-9 !px-4 text-sm" @click="close">{{ t('qc_cancel') }}</button>
+              <button class="g-btn-primary !h-9 px-5 text-sm" @click="save">{{ t('qc_save') }}</button>
+            </div>
           </div>
         </div>
       </div>

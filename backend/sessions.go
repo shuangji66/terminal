@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -26,6 +27,20 @@ const maxHistoryBytes = 4 * 1024 * 1024 // 4MB
 // wsChunkSize 是历史回放时单帧的最大字节数。
 const wsChunkSize = 32 * 1024 // 32KB
 
+// connWriteTimeout 是向单个已挂载连接写数据（实时广播 / 顶号通知）的写超时。
+// 客户端停止读取（挂起的笔记本、静默掉线的网络、被 SIGSTOP 的标签页）时内核发送缓冲
+// 会填满，无超时的 Write 会永久阻塞——而广播是在 histMu 内做的，一旦卡住，同会话的
+// 历史回放（attach）、history/clear 接口会一起挂死，会话从此无法再被任何设备挂载。
+// 超时即视为该端已失联：广播侧解除挂载（下一轮 conn 为 nil，直接跳过）。
+const connWriteTimeout = 5 * time.Second
+
+// exitedGrace 是「shell 已退出」的会话在服务端的保留时长：这段时间内仍可回放历史，
+// 到期由后端自动回收（进程 + 临时文件）。已退出的会话不再有任何交互价值，不回收就会
+// 在进程生命周期内无限堆积（PTY 已死，输入只会得到 EIO）。注意这只针对**已退出**的
+// 会话：运行中的会话仍然只能经 DELETE /api/session 终止（见 AGENTS.md）。
+// （var 而非 const：便于测试把宽限期缩短。）
+var exitedGrace = 10 * time.Minute
+
 // Session 是一个独立的 PTY 终端会话。输出实时镜像到临时历史文件（应用停止时
 // 整目录清除），浏览器断开只“解挂载”不杀会话，刷新后凭 id 重新挂载并回放历史。
 type Session struct {
@@ -34,29 +49,27 @@ type Session struct {
 	// 若只按运行用户名猜，root/应用用户会被重建成登录用户（标签名却还写着原用户）。
 	spec       string
 	id         string
-	shell      string
-	renv       *RuntimeEnv
 	cmd        *exec.Cmd
 	pty        *os.File
 	hist       *os.File
 	createdAt  time.Time
 	lastActive time.Time
 
-	// 会话以哪个用户运行（root 或 X-Trim-Userid 指定的 NAS 用户 / 指定 uid）
-	uid      int
-	gid      int
-	home     string
+	// username 是会话实际运行用户的显示名（root / NAS 用户名 / 应用 APP NAME），
+	// 经 /api/sessions 的 user 字段下发，用于标签上的「终端 N:<用户>」标注。
 	username string
 
 	// histMu 串行化“追加历史 + 广播到已挂载连接”：回放历史与实时追加在同一把
-	// 锁内完成，保证不存在重复或丢失的字节。
+	// 锁内完成，保证不存在重复或丢失的字节；向连接的写也在锁内（带写超时，见 pump）。
 	histMu sync.Mutex
 	conn   net.Conn
 	connMu sync.Mutex
 
 	exited bool
-	mu     sync.Mutex
-	closed bool
+	// exitedCh 在 pump 结束（shell 退出、输出读尽）时关闭，供到期回收协程等待。
+	exitedCh chan struct{}
+	mu       sync.Mutex
+	closed   bool
 }
 
 // errNotOwner：请求来自已不是操作端的连接（已被其他设备顶掉的旧连接）。
@@ -79,6 +92,11 @@ type runUser struct {
 //     （头缺失时回退当前进程用户）
 //   - userSpec 为数字 → 指定 uid
 //
+// **解析失败一律返回错误，不静默回退**：曾经把无法识别的 user= 值当成「当前登录用户」，
+// 于是拼错参数（或网关给了非数字的 X-Trim-Userid）会悄悄拿到后端进程用户的 shell
+// （部署时即 root），调用方却以为一切正常。前端只会发 nas/root/app:<NAME>，
+// 所以这里收紧不会影响既有交互。
+//
 // 通过 /etc/passwd（os/user.LookupId）解析用户名与家目录；无条目时回退。
 func resolveRunUser(renv *RuntimeEnv, userSpec, trimUID string) (*runUser, error) {
 	if userSpec == "root" {
@@ -88,16 +106,23 @@ func resolveRunUser(renv *RuntimeEnv, userSpec, trimUID string) (*runUser, error
 		return resolveAppRunUser(renv, name)
 	}
 	uidStr := ""
-	if userSpec == "" || userSpec == "nas" {
-		uidStr = trimUID
-	} else {
+	fromHeader := false
+	switch userSpec {
+	case "", "nas":
+		uidStr, fromHeader = trimUID, true
+	default:
 		uidStr = userSpec
 	}
 	uid := os.Getuid()
 	if uidStr != "" {
-		if n, err := strconv.Atoi(uidStr); err == nil && n >= 0 {
-			uid = n
+		n, err := strconv.Atoi(uidStr)
+		if err != nil || n < 0 {
+			if fromHeader {
+				return nil, fmt.Errorf("invalid X-Trim-Userid %q", uidStr)
+			}
+			return nil, fmt.Errorf("invalid user spec %q (want nas / root / app:<APP NAME> / <uid>)", userSpec)
 		}
+		uid = n
 	}
 	gid := os.Getgid()
 	home := os.Getenv("HOME")
@@ -112,7 +137,9 @@ func resolveRunUser(renv *RuntimeEnv, userSpec, trimUID string) (*runUser, error
 		name = u.Username
 	}
 	if home == "" {
-		home = "/home/" + uidStr
+		// 既查不到 /etc/passwd 条目、也没有可继承的 HOME：用根目录（必然存在）而不是
+		// 拼一个不存在的 /home/<uid>，否则 PTY 会因 cmd.Dir 无效而直接启动失败。
+		home = "/"
 	}
 	return &runUser{uid: uid, gid: gid, home: home, username: name}, nil
 }
@@ -183,7 +210,7 @@ func (s *Session) pump() {
 			c := s.conn
 			s.connMu.Unlock()
 			if c != nil {
-				c.Write(wsFrame(opText, chunk))
+				s.writeConn(c, wsFrame(opText, chunk))
 			}
 			s.histMu.Unlock()
 		}
@@ -202,10 +229,30 @@ func (s *Session) pump() {
 	c := s.conn
 	s.connMu.Unlock()
 	if c != nil {
-		c.Write(wsFrame(opText, note))
-		c.Write(wsFrame(opText, []byte("\x1b]exit\x07")))
+		s.writeConn(c, wsFrame(opText, note))
+		s.writeConn(c, wsFrame(opText, []byte("\x1b]exit\x07")))
 	}
 	s.histMu.Unlock()
+	close(s.exitedCh)
+}
+
+// writeFramed 写一帧并带上写超时（见 connWriteTimeout）。失败由调用方决定怎么处理：
+// 已挂载连接走 writeConn（解挂载），挂载中的回放直接把错误返回给 WS handler。
+func writeFramed(c net.Conn, frame []byte) error {
+	_ = c.SetWriteDeadline(time.Now().Add(connWriteTimeout))
+	_, err := c.Write(frame)
+	return err
+}
+
+// writeConn 在 histMu 内（由调用方持有）向已挂载连接写一帧，带写超时。
+// 超时/出错说明该端已不读数据：解除挂载（后续广播直接跳过它）+ 关掉这个连接
+// （让对端若还活着就能立刻看到「连接已关闭」，而不是停在「看着连着、其实没输出」），
+// 绝不让一次失联的写把 histMu 长期占住——否则同会话的 attach/history 会被一起堵死。
+func (s *Session) writeConn(c net.Conn, frame []byte) {
+	if err := writeFramed(c, frame); err != nil {
+		s.detach(c)
+		_ = c.Close()
+	}
 }
 
 // attach 把连接挂载到会话：先回放历史文件内容（上限 maxHistoryBytes，分帧发送），
@@ -231,7 +278,8 @@ func (s *Session) attach(c net.Conn) (net.Conn, error) {
 				for {
 					n, rerr := s.hist.Read(chunk)
 					if n > 0 {
-						if _, werr := c.Write(wsFrame(opText, chunk[:n])); werr != nil {
+						// 回放同样带写超时：新端不读数据时不能让 histMu 一直被占着
+						if werr := writeFramed(c, wsFrame(opText, chunk[:n])); werr != nil {
 							return nil, werr
 						}
 					}
@@ -242,7 +290,7 @@ func (s *Session) attach(c net.Conn) (net.Conn, error) {
 			}
 		}
 	}
-	if _, err := c.Write(wsFrame(opText, []byte("\x1b]ready\x07"))); err != nil {
+	if err := writeFramed(c, wsFrame(opText, []byte("\x1b]ready\x07"))); err != nil {
 		return nil, err
 	}
 	// 换主与历史回放同处一个 histMu 临界区：新连接既不漏字节，也不与广播交叉。
@@ -305,8 +353,12 @@ func (s *Session) close() error {
 
 	var firstErr error
 	if s.cmd != nil && s.cmd.Process != nil {
-		s.cmd.Process.Kill()
-		if err := s.cmd.Wait(); err != nil && firstErr == nil {
+		// Kill 一定会让 Wait 返回「被信号杀死」的 *exec.ExitError —— 那是**预期**的终止
+		// 结果，不是清理失败。曾把它当错误上抛，导致 DELETE /api/session 对运行中的
+		// 会话一律回 404（会话其实已经删掉了）。只有真正的清理失败才返回错误。
+		_ = s.cmd.Process.Kill()
+		var exitErr *exec.ExitError
+		if err := s.cmd.Wait(); err != nil && !errors.As(err, &exitErr) && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -378,23 +430,35 @@ func (m *SessionManager) create(runAs *runUser, spec string) (*Session, error) {
 	s := &Session{
 		id:         id,
 		spec:       spec,
-		shell:      m.renv.Shell,
-		renv:       m.renv,
 		cmd:        cmd,
 		pty:        f,
 		hist:       hist,
 		createdAt:  time.Now(),
 		lastActive: time.Now(),
-		uid:        runAs.uid,
-		gid:        runAs.gid,
-		home:       runAs.home,
 		username:   runAs.username,
+		exitedCh:   make(chan struct{}),
 	}
 	go s.pump()
+	go m.reapWhenExited(s)
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
 	return s, nil
+}
+
+// reapWhenExited 在会话的 shell 退出后再等 exitedGrace 就回收它（PTY/进程 + 历史文件）。
+// 已退出的会话没有任何交互价值（PTY 已死，输入只会得到 EIO），不回收就会在进程生命周期
+// 内无限堆积。宽限期内历史文件仍在，前端此时挂载仍能回放（只是不会再恢复成标签）。
+// 会话被用户显式关闭（DELETE）时这里同样会醒来：那时它已不在表里（或已关闭），直接返回。
+func (m *SessionManager) reapWhenExited(s *Session) {
+	<-s.exitedCh
+	if s.isClosed() {
+		return
+	}
+	time.Sleep(exitedGrace)
+	if cur, ok := m.get(s.id); ok && cur == s && !s.isClosed() {
+		m.closeByID(s.id)
+	}
 }
 
 func (m *SessionManager) get(id string) (*Session, bool) {

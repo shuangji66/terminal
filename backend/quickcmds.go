@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,6 +27,10 @@ type quickCmdsFile struct {
 	Commands []QuickCmd `json:"commands"`
 }
 
+// maxQuickCmdsBody 是保存请求体的上限（整表提交，正常只有几 KB；没有上限时一个
+// 客户端可以用超大 body 把进程内存打爆 —— 该进程以 root 运行且承载全部会话）。
+const maxQuickCmdsBody = 1 << 20 // 1MB
+
 // quickCmdsMu serializes concurrent reads/writes of the persisted file.
 var quickCmdsMu sync.Mutex
 
@@ -39,10 +44,16 @@ func (m *AdminMux) handleGetQuickCmds(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *AdminMux) handleSaveQuickCmds(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxQuickCmdsBody)
 	var req struct {
 		Commands []QuickCmd `json:"commands"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		writeErr(w, "invalid request body", http.StatusBadRequest)
 		return
 	}

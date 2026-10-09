@@ -48,6 +48,9 @@ export const HEARTBEAT_PAYLOAD = '\x1b]ping\x07'
 export const DETACHED_PAYLOAD = '\x1b]detached\x07'
 // 「已被其他设备接管」的 WebSocket 关闭码（与 backend/terminal.go 的 wsCloseTaken 对应）
 export const WS_CLOSE_DETACHED = 4001
+// 「该会话在后端不存在」的控制帧，附在后端的错误文本帧末尾（与 oscGone 对应）。
+// **必须**用它判定，不能匹配人类可读文本：终端里 echo 出 "session not found" 就会误删标签。
+export const SESSION_GONE_PAYLOAD = '\x1b]gone\x07'
 
 export interface QuickCmd {
   id: string

@@ -151,6 +151,14 @@ export const useSessionsStore = defineStore('sessions', () => {
     const idx = tabs.value.findIndex((tb) => tb.uid === uid)
     const tab = tabs.value[idx]
     if (!tab) return null
+    if (tab.id) {
+      // 标签没了，它记在 localStorage 里的自定义标题也该清掉，否则映射只增不减
+      const map = readTitleMap()
+      if (map[tab.id]) {
+        delete map[tab.id]
+        localStorage.setItem(TITLES_KEY, JSON.stringify(map))
+      }
+    }
     if (closeRemote && tab.id) {
       api.closeSession(tab.id).catch((e) => console.warn('close session error:', e))
     }
@@ -182,13 +190,16 @@ export const useSessionsStore = defineStore('sessions', () => {
   }
 
   // 前端启动：恢复后端仍在运行的活动会话（历史回放由各 TerminalPane 负责）。
+  // **只恢复真正还能交互的会话**：shell 已经退出的会话（exited）PTY 已死，恢复成标签只会
+  // 得到「看着已连接、打字没反应」的僵尸标签——后端只在进程退出那一刻给当时挂载的连接发
+  // \x1b]exit\x07，重新挂载时不会再发，状态点还会变绿。这类会话由后端在宽限期后回收。
   // **无会话可恢复时不自动建会话**：前端不替用户决定以谁进入 bash，改为置位
   // needsUserPick，由 TabBar 弹选人窗（与「关掉最后一个标签」同一交互）。
   async function restore() {
     restoring.value = true
     try {
       const res = await api.sessions()
-      const list = res.sessions || []
+      const list = (res.sessions || []).filter((s) => !s.exited)
       if (list.length === 0) {
         requestUserPick()
       } else {

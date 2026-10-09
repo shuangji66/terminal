@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -326,27 +327,22 @@ func isWebSocket(r *http.Request) bool {
 	return up == "websocket"
 }
 
-// serveAdminSocket listens on the unix admin socket (the only access point).
-func serveAdminSocket(m *AdminMux) error {
-	renv := m.renv
+// listenAdminSocket 绑定唯一访问入口（unix socket），失败由 main 决定退出。
+// 绑定必须成功才进入信号等待：旧实现在 goroutine 里 bind，失败只打日志，于是进程
+// 会「活着但没有任何 socket」——supervisor 看不出异常，用户访问不了也查不出原因。
+func listenAdminSocket(renv *RuntimeEnv) (net.Listener, error) {
 	os.Remove(renv.AdminSock)
 	if dir := filepath.Dir(renv.AdminSock); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	ln, err := netListen("unix", renv.AdminSock)
+	ln, err := net.Listen("unix", renv.AdminSock)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if e := os.Chmod(renv.AdminSock, 0o660); e != nil {
 		logger().Printf("admin socket chmod: %v", e)
 	}
-	h := m.buildHandler()
-	srv := &http.Server{Handler: h}
-	go func() {
-		<-stopCh
-		srv.Close()
-	}()
-	return srv.Serve(ln)
+	return ln, nil
 }
