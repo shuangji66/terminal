@@ -76,6 +76,8 @@
 - **快捷指令** — 终端快捷命令持久化到文件（`TERMINAL_QUICK_CMDS_FILE`），弹窗顶部
   提供「新增 / 关闭」，支持编辑 / 删除 / 一键执行（可勾选自动回车执行），执行后光标
   聚焦回终端；弹窗在**终端区域内垂直居中**、高度随内容自适应（上限终端区域的 90%）。
+  **命令内容加密落盘**（AES-256-GCM，主密钥见下文「快捷指令的命令内容加密」），
+  名称 / 是否自动回车仍是明文；API 收发的始终是明文内容，命令内容与格式逐字节不变。
 - **设置弹窗** — 顶部一行「主题（图标+当前模式，点击循环浅色/深色/跟随系统）与语言」；
   终端字号（左减右加 10–26，默认 16，存浏览器 localStorage 即时生效）；
   末尾「关于」：标题与「设置」标题同样式，右侧仅一个 GitHub 图标入口（点击新标签打开）。
@@ -155,7 +157,8 @@
 │   ├── admin.go             # Admin mux：SPA、API 路由、baseurl 注入
 │   ├── sessions.go          # 会话管理：PTY 会话（按用户运行/临时历史文件/挂载回放/清空/关闭）
 │   ├── terminal.go          # WebSocket 终端处理器（新建会话用户解析、挂载、resize、心跳）
-│   ├── quickcmds.go         # 快捷指令持久化 API
+│   ├── quickcmds.go         # 快捷指令持久化 API（命令内容加密落盘 + 旧明文迁移）
+│   ├── secret.go            # 主密钥管理 + AES-256-GCM 信封（快捷指令命令内容）
 │   └── apps.go              # 应用用户：appcenter-cli list 解析/过滤，app:<APP NAME> 用户解析
 └── frontend/                # Vue 3 前端
     ├── index.html           # 注入 <base> 由后端运行时改写
@@ -203,6 +206,8 @@ baseurl 前缀下；也可直接 `curl --unix-socket` 访问或本地反代到 1
 | `TERMINAL_ADMIN_SOCK` | Unix socket 路径（唯一访问入口） | `$TMPDIR/terminal/app.sock` |
 | `TERMINAL_ADMIN_BASEURL` | 前端资源 baseurl 前缀（空 = 根路径） | 空 |
 | `TERMINAL_QUICK_CMDS_FILE` | 快捷指令持久化文件 | `$TMPDIR/terminal/quickcmds.json` |
+| `TERMINAL_MASTER_KEY` | 快捷指令命令内容的加密主密钥（32 字节 base64/hex，**优先于**密钥文件） | 空 |
+| `TERMINAL_MASTER_KEY_FILE` | 主密钥文件（缺失时自动生成 0600） | 与快捷指令文件同目录的 `master.key` |
 | `TERMINAL_SESSION_DIR` | 终端会话临时目录（**应用停止时整目录清除**） | `$TMPDIR/terminal/sessions` |
 | `TERMINAL_APP_HOME_TEMPLATE` | 应用用户 HOME / 工作目录模板（`%s` = APP NAME） | `/var/apps/%s/home` |
 | `TERMINAL_APPCENTER_CLI` | 列出已安装应用的命令（失败时回退扫描应用根目录） | `appcenter-cli` |
@@ -254,6 +259,48 @@ location /app/terminal/ {
 
 ---
 
+## 快捷指令的命令内容加密
+
+用户往快捷指令里放的常常是 `mysql -uroot -p<密码>`、带 token 的 curl 这类东西，
+所以**命令内容加密落盘**（AES-256-GCM），名称 / 是否自动回车仍是明文——名称是给人看的
+标签，加密它反而让文件没法排查。
+
+```jsonc
+// $TERMINAL_QUICK_CMDS_FILE（版本 2）
+{
+  "version": 2,
+  "commands": [
+    { "id": "…", "name": "数据库", "auto": true,
+      "content": { "v": 1, "ct": "<base64(nonce||ciphertext)>" } }
+  ]
+}
+```
+
+- **密钥**：优先 `TERMINAL_MASTER_KEY`（32 字节 base64/hex，由启动脚本 / 容器 secret
+  注入），否则用 `TERMINAL_MASTER_KEY_FILE`（默认与快捷指令文件同目录的 `master.key`，
+  缺失时自动生成，权限 0600）。**丢了主密钥，已加密的命令内容就解不回来**——备份数据
+  目录时要连 `master.key` 一起备份。
+- **AAD 绑定指令 id**：密文 AAD 是 `terminal:v1:quickcmd:<指令 id>:global`。把某条指令的
+  密文剪到另一条指令上（或换主密钥）都会**解密失败并明确报错**（不会静默给一个空内容，
+  否则用户一点保存就把服务端那份覆盖成空的）。
+- **加密边界只在落盘那一层**：`GET/POST /api/quickcmds` 收发的 `content` 始终是明文，
+  前端完全不需要知道这件事。
+- **内容与格式逐字节不变**：只 trim 名称，命令内容原样保留（前导/行尾空格、tab、CRLF、
+  多行都是命令的一部分）。
+- **旧明文自动迁移**：旧版（版本 1 的明文 `content`，甚至更早的裸数组文件）**读到时就地
+  加密重写**，进程启动时还会主动迁一次——前端只在打开快捷指令弹窗时才请求列表，光靠读时
+  迁移兜不住「用户几个月不点它」。迁移保住内容与 `auto` 不变；内容为空或加密失败的条目会
+  被换成**加密后的占位文案**「命令加密失败已清空，请重新添加」并关掉「自动回车」——
+  磁盘上不会再留下明文的命令内容；迁移写不进去时读接口**报错**（而不是把明文端出去）。
+- **威胁模型（如实写清，别夸大）**：这一层防的是「拿到磁盘快照 / 备份 / 卷拷贝的人直接读到
+  明文命令」。它**不防**「已经能以同权限读取数据目录的攻击者」——`master.key` 就在密文旁边。
+  想避免密钥与密文同放，用 `TERMINAL_MASTER_KEY` 从外部注入。
+- **主密钥不可用时**（文件损坏 / 读不出来）：进程照常启动（终端是这台 NAS 的带外入口，
+  不该为一条快捷指令把整个终端停掉），但快捷指令的读取与保存都会明确报错，
+  **绝不退化成写明文**；日志里会有一行「快捷指令加密不可用」。
+
+---
+
 ## HTTP API
 
 | 方法 & 路径 | 说明 |
@@ -264,7 +311,7 @@ location /app/terminal/ {
 | `GET /api/session/history?id=` | 会话历史内容（取末尾 ≤4MB） |
 | `POST /api/session/clear?id=` | **清空**会话历史临时文件（前端"清屏"同步调用） |
 | `DELETE /api/session?id=` | 终止会话（唯一终止路径；关闭标签页时调用） |
-| `GET /api/quickcmds` / `POST /api/quickcmds` | 快捷指令列表 / 整体保存（原子写） |
+| `GET /api/quickcmds` / `POST /api/quickcmds` | 快捷指令列表 / 整体保存（原子写；`content` 明文收发、密文落盘） |
 
 ### 静态资源缓存
 

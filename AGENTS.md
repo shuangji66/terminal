@@ -68,8 +68,8 @@
   客户端断开**只解挂载不杀会话**；挂载成功即成为唯一操作端，旧连接由 `kickDetached`
   （`\x1b]detached\x07` + WS close 4001，持 `histMu` 写以免与 pump 的广播交错）通知并关闭。
   帧长/消息/`resize` 行列都有上限，会话不存在时附 `\x1b]gone\x07` 控制帧（见第 5 节）。
-- `quickcmds.go` — 快捷指令整体保存（tmp + rename 原子写，兼容旧版裸数组格式），
-  请求体限 1MB。
+- `quickcmds.go` — 快捷指令整体保存（tmp + rename 原子写，兼容旧明文/裸数组），请求体限 1MB；
+  **命令内容 AES-256-GCM 加密落盘**（v2，AAD 绑定指令 id，见 `secret.go`）。
 - `apps.go` — 应用用户（NAS 应用）支持：执行 `appcenter-cli list` 解析 **APP NAME**，
   过滤 `trim.*` 系统软件与「无同名系统用户 / 家目录不存在」的应用，按名排序后供
   `/api/apps` 返回；`resolveAppRunUser` 把 `app:<APP NAME>` 解析为 uid/gid/HOME

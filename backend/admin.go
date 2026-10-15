@@ -17,12 +17,17 @@ type AdminMux struct {
 	renv     *RuntimeEnv
 	sessions *SessionManager
 	spa      http.Handler
+	// crypt 是快捷指令命令内容的落盘加密器（AES-256-GCM，见 secret.go）。
+	// **可能为 nil**：主密钥读不到/解不出时进程照常启动（终端是这个 NAS 的带外入口，
+	// 不该为一条快捷指令把整个终端停掉），但写路径一律拒绝，绝不退化成写明文。
+	crypt *cryptor
 }
 
-func newAdminMux(renv *RuntimeEnv) *AdminMux {
+func newAdminMux(renv *RuntimeEnv, crypt *cryptor) *AdminMux {
 	return &AdminMux{
 		renv:     renv,
 		sessions: NewSessionManager(renv),
+		crypt:    crypt,
 	}
 }
 

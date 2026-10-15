@@ -45,12 +45,27 @@ func main() {
 		os.MkdirAll(dir, 0o755)
 	}
 
+	// 快捷指令命令内容的加密（主密钥缺失时自动生成 0600 的 master.key）。
+	// 失败**不退出**：终端是这个 NAS 的带外访问入口，为一条快捷指令的密钥把整个终端停掉
+	// 不划算——照常启动，但快捷指令的保存会明确报错，绝不退化成写明文（见 quickcmds.go）。
+	crypt, err := loadCryptor(renv.MasterKeyFile, renv.MasterKey)
+	if err != nil {
+		logger().Printf("快捷指令加密不可用（%v）：命令内容不会加密落盘，保存快捷指令会失败", err)
+	}
+
+	// 一次性迁移：把旧版本留在磁盘上的**明文**命令内容加密（见 migrateQuickCmdsAtStartup）。
+	// 放在这里而不是等用户打开弹窗：前端只在弹窗打开时才加载列表，用户几个月不点它，
+	// 明文就会一直躺在磁盘上。失败只记日志、不拦住启动。
+	if merr := migrateQuickCmdsAtStartup(&renv, crypt); merr != nil {
+		logger().Printf("迁移明文快捷指令失败（打开弹窗或下次启动时会重试）：%v", merr)
+	}
+
 	// 唯一访问入口：unix socket（baseurl 仅用于前端资源前缀）
 	if _, err := net.Dial("unix", renv.AdminSock); err == nil {
 		logger().Printf("admin socket %s already in use, exiting", renv.AdminSock)
 		os.Exit(1)
 	}
-	admin := newAdminMux(&renv)
+	admin := newAdminMux(&renv, crypt)
 	admin.SetSPA(embeddedFS)
 
 	// 先绑定再进信号等待：绑定失败就退出（而不是空转），失败信息进日志由 supervisor 兜底。
